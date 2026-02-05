@@ -1,9 +1,18 @@
 class Cell {
-    constructor(x, y, size, color) {
+    constructor(x, y, size, state) {
         this.x = x;
         this.y = y;
         this.size = size;
-        this.color = color;
+        this.state = state;
+    }
+}
+
+function get_color_from_state(state) {
+    if (state === 0) {
+        return color("white");
+    }
+    if (state === 1) {
+        return color("black");
     }
 }
 
@@ -19,8 +28,14 @@ function initializeGrid() {
         for (let j = 0; j < rows; j++) {
             let x = i * cell_size;
             let y = j * cell_size;
-            let color = 127; // default grey color
-            grid[i][j] = new Cell(x, y, cell_size, color);
+            // let state = 0; // default state
+            randomn = random(100);
+            if (randomn < 10) {
+                state = 1; // black
+            } else {
+                state = 0; // white
+            }
+            grid[i][j] = new Cell(x, y, cell_size, state);
         }
     }
 }
@@ -29,45 +44,64 @@ function drawGrid() {
     for (let i = 0; i < cols; i++) {
         for (let j = 0; j < rows; j++) {
             let cell = grid[i][j];
-            fill(cell.color);
+            console.log(cell.state);
+            fill(get_color_from_state(cell.state));
             rect(cell.x, cell.y, cell.size, cell.size);
         }
     }
 }
 
-// function draw() {
-//     background(127);
-// }
-
 function setup() {
     createCanvas(cols * cell_size, rows * cell_size);
-    // draw();
     initializeGrid();
     drawGrid();
+    setTimeout(nextFrame, 1000);
     nextFrame();
 }
 
 function nextFrame() {
+    setTimeout(nextFrame, 1000); // call nextFrame every 1000 milliseconds
     // update state function
     updateState();
     drawGrid();
-    setTimeout(nextFrame, 500); // call nextFrame every 500 milliseconds
 }
 
 function updateState() {
-    for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows; j++) {
+        for (let i = 0; i < cols; i++) {
+            for (let j = 0; j < rows; j++) {
             let cell = grid[i][j];
-            // Randomly change color to black or white
-            if (random(1) < 0.5) {
-                cell.color = color("red"); // black
-            } else {
-                cell.color = color("blue"); // white
+            // get all 8 neighbors
+            let neighbors = [];
+            for (let x = -1; x <= 1; x++) {
+                for (let y = -1; y <= 1; y++) {
+                    if (x === 0 && y === 0) continue; // skip the cell itself
+                    let neighbor_x, neighbor_y;
+                    // check if neighbor is not within bounds of the grid
+                    if (i + x < 0 || i + x >= cols) {
+                        neighbor_x = (i + x + cols) % cols; // wrap around horizontally
+                    } else {
+                        neighbor_x = i + x;
+                    }
+                    if (j + y < 0 || j + y >= rows) {
+                        neighbor_y = (j + y + rows) % rows; // wrap around vertically
+                    } else {
+                        neighbor_y = j + y;
+                    }
+                    neighbors.push(grid[neighbor_x][neighbor_y]);
+                }
             }
+
+            // for testing only
+            // randomn = random(100);
+            // if (randomn < 10) {
+            //     state = 1; // black
+            // } else {
+            //     state = 0; // white
+            // }
+            // cell.state = state;
         }
     }
-}
-    
+}   
 
 // function mouseMoved() {
 //     if (mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height) {
