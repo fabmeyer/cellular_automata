@@ -30,8 +30,8 @@ let grid = new Array(cols).fill().map(() => new Array(rows));
 
 // simulation parameters
 let time_interval = 100;
-let percent_alive = 0.2;
-let max_age = 7;
+let percent_alive = 0.25;
+let max_age = 30;
 
 function initializeGrid() {
     for (let i = 0; i < cols; i++) {
@@ -81,36 +81,36 @@ function wrapIndex(idx, max) {
 }
 
 function updateState() {
-    new_grid = new Array(cols).fill().map(() => new Array(rows));
-        for (let i = 0; i < cols; i++) {
-            for (let j = 0; j < rows; j++) {
-                let cell = grid[i][j];
-                let new_cell = cell; // copy current cell
-                // get all 8 neighbors
-                let neighbors = [];
-                for (let x = -1; x <= 1; x++) {
-                    for (let y = -1; y <= 1; y++) {
-                        if (x === 0 && y === 0) continue; // skip the cell itself
-                        const neighbor_x = wrapIndex(i + x, cols);
-                        const neighbor_y = wrapIndex(j + y, rows);
-                        neighbors.push(grid[neighbor_x][neighbor_y]);
-                    }
+    let new_grid = new Array(cols).fill().map(() => new Array(rows));
+    for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+            let cell = grid[i][j];
+            // copy current cell to new cell
+            let new_cell = new Cell(cell.x, cell.y, cell.size, cell.state, cell.age);
+            // get all 8 neighbors
+            let neighbors = [];
+            for (let x = -1; x <= 1; x++) {
+                for (let y = -1; y <= 1; y++) {
+                    if (x === 0 && y === 0) continue; // skip the cell itself
+                    const neighbor_x = wrapIndex(i + x, cols);
+                    const neighbor_y = wrapIndex(j + y, rows);
+                    neighbors.push(grid[neighbor_x][neighbor_y]);
                 }
-                
-                
-                let [next_state, next_age] = rule(cell, neighbors);
-                new_cell.state = next_state;
-                new_cell.age = next_age;
-                
-                new_grid[i][j] = new_cell;
-                // for testing only
-                // let randomn = random(100);
-                // if (randomn < percent_alive * 100) {
-                //     state = 1; // black
-                // } else {
-                //     state = 0; // white
-                // }
-                // cell.state = state;
+            }
+
+            let [next_state, next_age] = rule(cell, neighbors);
+            new_cell.state = next_state;
+            new_cell.age = next_age;
+
+            new_grid[i][j] = new_cell;
+            // for testing only
+            // let randomn = random(100);
+            // if (randomn < percent_alive * 100) {
+            //     state = 1; // black
+            // } else {
+            //     state = 0; // white
+            // }
+            // cell.state = state;
         }
     }
     grid = new_grid;
