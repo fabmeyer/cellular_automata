@@ -7,15 +7,15 @@ class Cell {
 }
 
 // grid parameters
-const cols = 500;
-const rows = 500;
-const cell_size = 4;
+const cols = 400;
+const rows = 400;
+const cell_size = 2;
 
 // create a 2D array with given number of columns and rows
 let grid = new Array(cols).fill().map(() => new Array(rows));
 
 // simulation parameters
-const time_interval = 10;
+const time_interval = 20;
 const n_states = 3; // number of different states
 // assert n_states is less than 10, otherwise the rule map will be too large to handle
 if (n_states >= 10) {
@@ -28,18 +28,22 @@ if (neighborhood_width % 2 === 0) {
 let time_step = 0;
 
 // create n different colors for different states
-let colors = [];
-for (let i = 0; i < n_states; i++) {
-    const r = Math.floor(Math.random() * 255);
-    const g = Math.floor(Math.random() * 255);
-    const b = Math.floor(Math.random() * 255);
-    colors.push(`rgb(${r}, ${g}, ${b})`);
+let colors = getRandomColor();
+function getRandomColor() {
+    let colors = [];
+    for (let i = 0; i < n_states; i++) {
+        const r = Math.floor(Math.random() * 255);
+        const g = Math.floor(Math.random() * 255);
+        const b = Math.floor(Math.random() * 255);
+        colors.push(`rgb(${r}, ${g}, ${b})`);
+    }
+    console.log(colors);
+    return colors;
 }
-console.log(colors);
 
 // create n_states * neighborhood_width different rules for generation
 // create a permutation with lenght = neighborhood_width and values = n_states
-const rule_map = generateRules();
+let rule_map = generateRules();
 function generateRules() {
     // use a map to store the rules, the key is the state of the neighbors and the value is the next state
     let rule_map = new Map();
@@ -48,9 +52,9 @@ function generateRules() {
         let value = Math.floor(Math.random() * n_states);
         rule_map.set(key, value);
     }
+    console.log(rule_map);
     return rule_map;
 }
-console.log(rule_map);
 
 function initializeGrid() {
     for (let i = 0; i < Math.floor(cols); i++) {
@@ -74,7 +78,9 @@ function setup() {
     initializeGrid();
     drawGrid();
     time_step += 1;
-    nextFrame();
+    setTimeout(() => {
+        nextFrame();
+    }, time_interval);
 }
 
 // // show time_step on the bottom of the canvas
@@ -97,6 +103,17 @@ function nextFrame() {
     time_step += 1;
     if (time_step < rows) {
         setTimeout(nextFrame, time_interval); // call nextFrame every 1000 milliseconds
+    } else if (time_step === rows) {
+        setTimeout(() => {
+            // rerun the simulation after it finishes
+            time_step = 0;
+            colors = getRandomColor();
+            rule_map = generateRules();
+            initializeGrid();
+            drawGrid();
+            time_step += 1;
+            setTimeout(nextFrame, time_interval);
+        }, time_interval*50); // wait for 10 seconds before resetting the grid
     }
 }
 
@@ -131,11 +148,11 @@ function updateState() {
     // console.log(`New row at time step ${time_step}:`, new_row);
 }
 
-// button to reset the grid
-function keyPressed() {
-    if (key === 'r' || key === 'R') {
-        time_step = 0;
-        initializeGrid();
-        drawGrid();
-    }
-}
+// // button to reset the grid
+// function keyPressed() {
+//     if (key === 'r' || key === 'R') {
+//         time_step = 0;
+//         initializeGrid();
+//         drawGrid();
+//     }
+// }
