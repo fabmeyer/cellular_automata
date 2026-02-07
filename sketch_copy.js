@@ -7,9 +7,9 @@ class Cell {
 }
 
 // grid parameters
-let cols = 150;
-let rows = 150;
-const cell_size = 5;
+const cols = 500;
+const rows = 500;
+const cell_size = 4;
 
 // create a 2D array with given number of columns and rows
 let grid = new Array(cols).fill().map(() => new Array(rows));
@@ -22,6 +22,9 @@ if (n_states >= 10) {
     throw new Error("n_states should be less than 10");
 }
 const neighborhood_width = 3; // 1d neighborhood width, should be an odd number
+if (neighborhood_width % 2 === 0) {
+    throw new Error("neighborhood_width should be an odd number");
+}
 let time_step = 0;
 
 // create n different colors for different states
@@ -60,33 +63,31 @@ function initializeGrid() {
 function drawGrid() {
     noStroke();
     for (let i = 0; i < Math.floor(cols); i++) {
-        for (let j = 0; j <= time_step; j++) {
-            const cell = grid[i][j];
-            fill(colors[cell.state]);
-            rect(cell.x, cell.y, cell_size, cell_size);
-        }
+        const cell = grid[i][time_step];
+        fill(colors[cell.state]);
+        rect(cell.x, cell.y, cell_size, cell_size);
     }
 }
 
 function setup() {
-    createCanvas(cols * cell_size, (rows * cell_size) + 20); // extra space for time step display
+    createCanvas(cols * cell_size, rows * cell_size);
     initializeGrid();
     drawGrid();
     time_step += 1;
     nextFrame();
 }
 
-// show time_step on the bottom of the canvas
-function draw() {
-    // clear the area where the time step is displayed
-    fill(color(255));
-    textAlign(LEFT, BOTTOM);
-    textFont("Helvetica");
-    textSize(16);
-    rect(0, height - 20, width, 20);
-    fill(color(0));
-    text(`time step: ${time_step}`, 8, height - 2);
-}
+// // show time_step on the bottom of the canvas
+// function draw() {
+//     // clear the area where the time step is displayed
+//     fill(color(255));
+//     textAlign(LEFT, BOTTOM);
+//     textFont("Helvetica");
+//     textSize(16);
+//     rect(0, height - 20, width, 20);
+//     fill(color(0));
+//     text(`time step: ${time_step}`, 8, height - 2);
+// }
 
 function nextFrame() {
     // update state function
@@ -108,15 +109,9 @@ function wrapIndex(idx, max) {
 }
 
 function updateState() {
-    let new_grid = new Array(cols).fill().map(() => new Array(rows));
-    // create deep copy of the grid
-    for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows; j++) {
-            new_grid[i][j] = grid[i][j];
-        }
-    }
-    // console.log(new_grid);
+    // create a new row
     let j = time_step;
+    let half = (neighborhood_width - 1) / 2
     for (let i = 0; i < cols; i++) {
         // console.log(`Updating cell at (${i}, ${j})`);
         let x = i * cell_size;
@@ -124,16 +119,16 @@ function updateState() {
         
         // get neighbor states from previous row
         let neighbor_states = '';
-        for (let k = -Math.floor(neighborhood_width / 2); k <= Math.floor(neighborhood_width / 2); k++) {
+        for (let k = -half; k <= half; k++) {
             let neighbor_i = wrapIndex(i + k, cols);
             let neighbor_j = wrapIndex(j - 1, rows);
             neighbor_states += grid[neighbor_i][neighbor_j].state.toString();
         }
         let new_state = rule_map.get(neighbor_states);
         const new_cell = new Cell(x, y, new_state);
-        new_grid[i][j] = new_cell;
+        grid[i][j] = new_cell;
     }
-    grid = new_grid;
+    // console.log(`New row at time step ${time_step}:`, new_row);
 }
 
 // button to reset the grid
