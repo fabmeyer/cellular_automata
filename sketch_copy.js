@@ -7,16 +7,16 @@ class Cell {
 }
 
 // grid parameters
-const cols = 400;
-const rows = 400;
+const cols = 500;
+const rows = 500;
 const cell_size = 2;
 
 // create a 2D array with given number of columns and rows
 let grid = new Array(cols).fill().map(() => new Array(rows));
 
 // simulation parameters
-const time_interval = 20;
-const n_states = 3; // number of different states
+const time_interval = 5;
+const n_states = 4; // number of different states
 // assert n_states is less than 10, otherwise the rule map will be too large to handle
 if (n_states >= 10) {
     throw new Error("n_states should be less than 10");
@@ -41,8 +41,7 @@ function getRandomColor() {
     return colors;
 }
 
-// create n_states * neighborhood_width different rules for generation
-// create a permutation with lenght = neighborhood_width and values = n_states
+
 let rule_map = generateRules();
 function generateRules() {
     // use a map to store the rules, the key is the state of the neighbors and the value is the next state
@@ -56,11 +55,48 @@ function generateRules() {
     return rule_map;
 }
 
+// convert the rule map from a base n_states number to a base 10 number and print it
+function printRuleMapAsNumber() {
+    let rule = "";
+    for (let [key, value] of rule_map) {
+        rule += value.toString();
+    }
+    console.log(`Rule number (base ${n_states}): ${rule}`);
+    let rule_number = parseInt(rule, n_states);
+    console.log(`Rule number (decimal): ${rule_number}`);
+}
+printRuleMapAsNumber();
+
 function initializeGrid() {
     for (let i = 0; i < Math.floor(cols); i++) {
         let x = i * cell_size;
         let randomn = Math.floor(Math.random() * n_states);
         grid[i][0] = new Cell(x, 0, randomn);
+    }
+}
+
+function initializeGrid() {
+    let data = [];
+    // use a data_length, such that rows % data_length != 0 to introduce inferences at the boundaries of the grid
+    let data_length = 8;
+    for (let i = 0; i < data_length; i++) {
+        data.push(Math.floor(Math.random() * n_states));
+    }
+    console.log("Initial data:", data);
+    for (let i = 0; i < Math.floor(cols/2); i += data_length) {
+        for (let j = 0; j < data_length && i + j < cols; j++) {
+            const cell = new Cell((i + j) * cell_size, 0, data[j]);
+            grid[i + j][0] = cell;
+        }
+    }
+    // flip the data for the second half of the grid to introduce more diversity
+    data.reverse();
+    // start from the end of the second half of the grid to introduce inferences at the boundaries of the grid
+    for (let i = cols - 1; i >= Math.floor(cols/2); i -= data_length) {
+        for (let j = 0; j < data_length && i - j >= 0; j++) {
+            const cell = new Cell((i - j) * cell_size, 0, data[j]);
+            grid[i - j][0] = cell;
+        }
     }
 }
 
@@ -103,18 +139,19 @@ function nextFrame() {
     time_step += 1;
     if (time_step < rows) {
         setTimeout(nextFrame, time_interval); // call nextFrame every 1000 milliseconds
-    } else if (time_step === rows) {
-        setTimeout(() => {
-            // rerun the simulation after it finishes
-            time_step = 0;
-            colors = getRandomColor();
-            rule_map = generateRules();
-            initializeGrid();
-            drawGrid();
-            time_step += 1;
-            setTimeout(nextFrame, time_interval);
-        }, time_interval*50); // wait for 10 seconds before resetting the grid
     }
+    // else if (time_step === rows) {
+    //     setTimeout(() => {
+    //         // rerun the simulation after it finishes
+    //         time_step = 0;
+    //         colors = getRandomColor();
+    //         rule_map = generateRules();
+    //         initializeGrid();
+    //         drawGrid();
+    //         time_step += 1;
+    //         setTimeout(nextFrame, time_interval);
+    //     }, time_interval*50); // wait for 10 seconds before resetting the grid
+    // }
 }
 
 function wrapIndex(idx, max) {
@@ -142,6 +179,7 @@ function updateState() {
             neighbor_states += grid[neighbor_i][neighbor_j].state.toString();
         }
         let new_state = rule_map.get(neighbor_states);
+        // let new_state = (parseInt(neighbor_states, n_states) + grid[wrapIndex(i, cols)][wrapIndex(j - 1, rows)].state) % n_states;
         const new_cell = new Cell(x, y, new_state);
         grid[i][j] = new_cell;
     }
