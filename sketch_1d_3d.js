@@ -30,33 +30,32 @@ let time_step = 0;
 
 // create n different colors for different states
 // if n_states is 2, we can use black and white
-if (n_states > 2) {
-    var colors = getRandomColor();
-    function getRandomColor() {
-        let colors = [];
-        for (let i = 0; i < n_states; i++) {
-            const r = Math.floor(Math.random() * 255);
-            const g = Math.floor(Math.random() * 255);
-            const b = Math.floor(Math.random() * 255);
-            colors.push(`rgb(${r}, ${g}, ${b})`);
-        }
-        console.log(colors);
-        return colors;
+var colors = getRandomColor();
+function getRandomColor() {
+    let colors = [];
+    // colors.push('rgba(0, 0, 0, 0)'); // transparent for state 0
+    // for (let i = 1; i < n_states; i++) {
+    for (let i = 0; i < n_states; i++) {
+        const r = Math.floor(Math.random() * 255);
+        const g = Math.floor(Math.random() * 255);
+        const b = Math.floor(Math.random() * 255);
+        colors.push(`rgb(${r}, ${g}, ${b})`);
     }
-} else {
-    var colors = ['rgba(0, 0, 0, 1)', 'rgba(255, 255, 255, 1)'];
+    console.log(colors);
+    return colors;
 }
 
 let rule_map = generateRules();
 function generateRules() {
     // Count-based rule classes (multiset): order does not matter.
     // Number of classes is C(neighbor_count + n_states - 1, n_states - 1).
+    p_c_0 = 0.333 // probability of a class mapping to state 0 (empty)
     let rule_map = new Map();
     function buildCountVectors(remaining, stateIndex, counts) {
         if (stateIndex === n_states - 1) {
             counts[stateIndex] = remaining;
             let key = counts.join(',');
-            let value = Math.floor(Math.random() * n_states);
+            let value = Math.random() < p_c_0 ? 0 : 1 + Math.floor(Math.random() * (n_states - 1));
             rule_map.set(key, value);
             return;
         }
@@ -97,6 +96,31 @@ function printRuleMapAsNumber() {
 }
 printRuleMapAsNumber();
 
+function d4Representative(i, j, size) {
+    const transforms = [
+        [i, j],
+        [j, size - 1 - i],
+        [size - 1 - i, size - 1 - j],
+        [size - 1 - j, i],
+        [i, size - 1 - j],
+        [size - 1 - i, j],
+        [j, i],
+        [size - 1 - j, size - 1 - i]
+    ];
+
+    let best = transforms[0];
+    let bestKey = best[0] * size + best[1];
+    for (let k = 1; k < transforms.length; k++) {
+        const candidate = transforms[k];
+        const key = candidate[0] * size + candidate[1];
+        if (key < bestKey) {
+            best = candidate;
+            bestKey = key;
+        }
+    }
+    return best;
+}
+
 // // initialize the first layer (depth = 0) of the grid with random states
 // function initializeGrid() {
 //     for (let i = 0; i < Math.floor(cols); i++) {
@@ -111,22 +135,67 @@ printRuleMapAsNumber();
 
 // initialize the first layer (depth = 0) with a repeating n*n seed matrix
 function initializeGrid() {
-    const pattern_size = 16;
-    
-    // Build a random seed matrix of states.
-    const seed = new Array(pattern_size)
+    // initialize the first layer (depth = 0) with the first state (empty)
+    for (let i = 0; i < Math.floor(cols); i++) {
+        for (let j = 0; j < Math.floor(rows); j++) {
+            let x = i * cell_size;
+            let y = j * cell_size;
+            grid[i][j][0] = new Cell(x, y, 0, 0);
+        }
+    }
+
+    const pattern_size = 8;
+    const tiled_size = pattern_size * 2;
+
+    // Build one random matrix, then project each cell to a canonical D4 orbit representative.
+    const seed = new Array(tiled_size)
     .fill(null)
-    .map(() => new Array(pattern_size).fill(null).map(() => Math.floor(Math.random() * n_states)));
+    .map(() => new Array(tiled_size).fill(null).map(() => Math.floor(Math.random() * n_states)));
+
+    const seed_d4 = new Array(tiled_size)
+    .fill(null)
+    .map(() => new Array(tiled_size).fill(0));
+
+    for (let i = 0; i < tiled_size; i++) {
+        for (let j = 0; j < tiled_size; j++) {
+            const rep = d4Representative(i, j, tiled_size);
+            seed_d4[i][j] = seed[rep[0]][rep[1]];
+        }
+    }
+
+    console.log("Initial D4 seed matrix:", seed_d4);
     
-    console.log("Initial seed matrix:", seed);
-    
-    // Tile the seed matrix across the full x/y plane at z=0.
-    for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows; j++) {
-            const x = i * cell_size;
-            const y = j * cell_size;
-            const state = seed[i % pattern_size][j % pattern_size];
-            grid[i][j][0] = new Cell(x, y, 0, state);
+    // // Tile the seed matrix across the full x/y plane at z=0.
+    // for (let i = 0; i < cols; i++) {
+    //     for (let j = 0; j < rows; j++) {
+    //         const x = i * cell_size;
+    //         const y = j * cell_size;
+    //         const state = seed[i % pattern_size][j % pattern_size];
+    //         grid[i][j][0] = new Cell(x, y, 0, state);
+    //     }
+    // }
+
+    // // Tile the seed matrix only in the center of the x/y plane at z=0, leaving the borders empty.
+    // const x_offset = Math.floor((cols - pattern_size) / 2);
+    // const y_offset = Math.floor((rows - pattern_size) / 2);
+    // for (let i = 0; i < pattern_size; i++) {
+    //     for (let j = 0; j < pattern_size; j++) {
+    //         const x = (x_offset + i) * cell_size;
+    //         const y = (y_offset + j) * cell_size;
+    //         const state = seed[i][j];
+    //         grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
+    //     }
+    // }
+
+    // Place the centered D4-symmetric seed block.
+    const x_offset = Math.floor((cols - tiled_size) / 2);
+    const y_offset = Math.floor((rows - tiled_size) / 2);
+    for (let i = 0; i < tiled_size; i++) {
+        for (let j = 0; j < tiled_size; j++) {
+            const x = (x_offset + i) * cell_size;
+            const y = (y_offset + j) * cell_size;
+            const state = seed_d4[i][j];
+            grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
         }
     }
 }
@@ -136,7 +205,8 @@ console.log("Initial grid:", grid);
 function drawLayer(zIndex) {
     noStroke();
     noLights();
-    ambientLight(250, 250, 250);
+    ambientLight(255);
+    // pointLight(255, 127, 127, 0, 300, 300);
     push();
     rotateX(-PI / 6);
     rotateY(PI / 3);
