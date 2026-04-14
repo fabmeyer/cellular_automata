@@ -41,7 +41,7 @@ function getRandomColor() {
         const b = Math.floor(Math.random() * 255);
         colors.push(`rgb(${r}, ${g}, ${b})`);
     }
-    console.log(colors);
+    // console.log(colors);
     return colors;
 }
 
@@ -49,7 +49,7 @@ let rule_map = generateRules();
 function generateRules() {
     // Count-based rule classes (multiset): order does not matter.
     // Number of classes is C(neighbor_count + n_states - 1, n_states - 1).
-    p_c_0 = 0.333 // probability of a class mapping to state 0 (empty)
+    p_c_0 = 0.5 // probability of a class mapping to state 0 (empty)
     let rule_map = new Map();
     function buildCountVectors(remaining, stateIndex, counts) {
         if (stateIndex === n_states - 1) {
@@ -66,7 +66,7 @@ function generateRules() {
     }
 
     buildCountVectors(neighbor_count, 0, new Array(n_states).fill(0));
-    console.log(rule_map);
+    // console.log(rule_map);
     return rule_map;
 }
 
@@ -90,9 +90,9 @@ function printRuleMapAsNumber() {
     for (let [key, value] of rule_map) {
         rule += value.toString();
     }
-    console.log(`Rule number (base ${n_states}): ${rule}`);
+    // console.log(`Rule number (base ${n_states}): ${rule}`);
     let rule_number = parseInt(rule, n_states);
-    console.log(`Rule number (decimal): ${rule_number}`);
+    // console.log(`Rule number (decimal): ${rule_number}`);
 }
 printRuleMapAsNumber();
 
@@ -144,7 +144,7 @@ function initializeGrid() {
         }
     }
 
-    const pattern_size = 8;
+    const pattern_size = 16;
     const tiled_size = pattern_size * 2;
 
     // Build one random matrix, then project each cell to a canonical D4 orbit representative.
@@ -163,17 +163,17 @@ function initializeGrid() {
         }
     }
 
-    console.log("Initial D4 seed matrix:", seed_d4);
+    // console.log("Initial D4 seed matrix:", seed_d4);
     
-    // // Tile the seed matrix across the full x/y plane at z=0.
-    // for (let i = 0; i < cols; i++) {
-    //     for (let j = 0; j < rows; j++) {
-    //         const x = i * cell_size;
-    //         const y = j * cell_size;
-    //         const state = seed[i % pattern_size][j % pattern_size];
-    //         grid[i][j][0] = new Cell(x, y, 0, state);
-    //     }
-    // }
+    // Tile the seed matrix across the full x/y plane at z=0.
+    for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+            const x = i * cell_size;
+            const y = j * cell_size;
+            const state = seed[i % pattern_size][j % pattern_size];
+            grid[i][j][0] = new Cell(x, y, 0, state);
+        }
+    }
 
     // // Tile the seed matrix only in the center of the x/y plane at z=0, leaving the borders empty.
     // const x_offset = Math.floor((cols - pattern_size) / 2);
@@ -188,19 +188,19 @@ function initializeGrid() {
     // }
 
     // Place the centered D4-symmetric seed block.
-    const x_offset = Math.floor((cols - tiled_size) / 2);
-    const y_offset = Math.floor((rows - tiled_size) / 2);
-    for (let i = 0; i < tiled_size; i++) {
-        for (let j = 0; j < tiled_size; j++) {
-            const x = (x_offset + i) * cell_size;
-            const y = (y_offset + j) * cell_size;
-            const state = seed_d4[i][j];
-            grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
-        }
-    }
+    // const x_offset = Math.floor((cols - tiled_size) / 2);
+    // const y_offset = Math.floor((rows - tiled_size) / 2);
+    // for (let i = 0; i < tiled_size; i++) {
+    //     for (let j = 0; j < tiled_size; j++) {
+    //         const x = (x_offset + i) * cell_size;
+    //         const y = (y_offset + j) * cell_size;
+    //         const state = seed_d4[i][j];
+    //         grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
+    //     }
+    // }
 }
 
-console.log("Initial grid:", grid);
+// console.log("Initial grid:", grid);
 
 function drawLayer(zIndex) {
     noStroke();
