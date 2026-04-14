@@ -33,9 +33,9 @@ let time_step = 0;
 var colors = getRandomColor();
 function getRandomColor() {
     let colors = [];
-    // colors.push('rgba(0, 0, 0, 0)'); // transparent for state 0
-    // for (let i = 1; i < n_states; i++) {
-    for (let i = 0; i < n_states; i++) {
+    colors.push('rgba(0, 0, 0, 0.5)'); // transparent for state 0
+    for (let i = 1; i < n_states; i++) {
+    // for (let i = 0; i < n_states; i++) {
         const r = Math.floor(Math.random() * 255);
         const g = Math.floor(Math.random() * 255);
         const b = Math.floor(Math.random() * 255);
@@ -45,11 +45,12 @@ function getRandomColor() {
     return colors;
 }
 
+// version 1
 let rule_map = generateRules();
 function generateRules() {
     // Count-based rule classes (multiset): order does not matter.
     // Number of classes is C(neighbor_count + n_states - 1, n_states - 1).
-    p_c_0 = 0.5 // probability of a class mapping to state 0 (empty)
+    p_c_0 = 0.75 // probability of a class mapping to state 0 (empty)
     let rule_map = new Map();
     function buildCountVectors(remaining, stateIndex, counts) {
         if (stateIndex === n_states - 1) {
@@ -69,6 +70,20 @@ function generateRules() {
     // console.log(rule_map);
     return rule_map;
 }
+
+// version 2
+// function generateRules() {
+//     // Using the sum of neighbor states as the key for the rule map,
+//     // which reduces the number of keys to n_states * neighbor_count (e.g. 3*9=27 for n_states=3 and neighbor_count=9).
+//     p_c_0 = 0.75 // probability of a class mapping to state 0 (empty)
+//     let rule_map = new Map();
+//     for (let sum = 0; sum <= neighbor_count * (n_states - 1); sum++) {
+//         let value = Math.random() < p_c_0 ? 0 : 1 + Math.floor(Math.random() * (n_states - 1));
+//         rule_map.set(sum.toString(), value);
+//     }
+//     // console.log(rule_map);
+//     return rule_map;
+// }
 
 function convert2DneighborhoodTo1D(x, y, z) {
     // Encode neighborhood as counts per state (order-invariant key).
@@ -136,15 +151,16 @@ function d4Representative(i, j, size) {
 // initialize the first layer (depth = 0) with a repeating n*n seed matrix
 function initializeGrid() {
     // initialize the first layer (depth = 0) with the first state (empty)
+    initial_layer = Math.floor(Math.random() * n_states);
     for (let i = 0; i < Math.floor(cols); i++) {
         for (let j = 0; j < Math.floor(rows); j++) {
             let x = i * cell_size;
             let y = j * cell_size;
-            grid[i][j][0] = new Cell(x, y, 0, 0);
+            grid[i][j][0] = new Cell(x, y, 0, initial_layer);
         }
     }
 
-    const pattern_size = 16;
+    const pattern_size = 12;
     const tiled_size = pattern_size * 2;
 
     // Build one random matrix, then project each cell to a canonical D4 orbit representative.
@@ -165,15 +181,15 @@ function initializeGrid() {
 
     // console.log("Initial D4 seed matrix:", seed_d4);
     
-    // Tile the seed matrix across the full x/y plane at z=0.
-    for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows; j++) {
-            const x = i * cell_size;
-            const y = j * cell_size;
-            const state = seed[i % pattern_size][j % pattern_size];
-            grid[i][j][0] = new Cell(x, y, 0, state);
-        }
-    }
+    // // Tile the seed matrix across the full x/y plane at z=0.
+    // for (let i = 0; i < cols; i++) {
+    //     for (let j = 0; j < rows; j++) {
+    //         const x = i * cell_size;
+    //         const y = j * cell_size;
+    //         const state = seed[i % pattern_size][j % pattern_size];
+    //         grid[i][j][0] = new Cell(x, y, 0, state);
+    //     }
+    // }
 
     // // Tile the seed matrix only in the center of the x/y plane at z=0, leaving the borders empty.
     // const x_offset = Math.floor((cols - pattern_size) / 2);
@@ -188,16 +204,16 @@ function initializeGrid() {
     // }
 
     // Place the centered D4-symmetric seed block.
-    // const x_offset = Math.floor((cols - tiled_size) / 2);
-    // const y_offset = Math.floor((rows - tiled_size) / 2);
-    // for (let i = 0; i < tiled_size; i++) {
-    //     for (let j = 0; j < tiled_size; j++) {
-    //         const x = (x_offset + i) * cell_size;
-    //         const y = (y_offset + j) * cell_size;
-    //         const state = seed_d4[i][j];
-    //         grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
-    //     }
-    // }
+    const x_offset = Math.floor((cols - tiled_size) / 2);
+    const y_offset = Math.floor((rows - tiled_size) / 2);
+    for (let i = 0; i < tiled_size; i++) {
+        for (let j = 0; j < tiled_size; j++) {
+            const x = (x_offset + i) * cell_size;
+            const y = (y_offset + j) * cell_size;
+            const state = seed_d4[i][j];
+            grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
+        }
+    }
 }
 
 // console.log("Initial grid:", grid);
@@ -243,23 +259,10 @@ function setup() {
     }, time_interval);
 }
 
-// // show time_step on the bottom of the canvas
-// function draw() {
-//     // clear the area where the time step is displayed
-//     fill(color(255));
-//     textAlign(LEFT, BOTTOM);
-//     textFont("Helvetica");
-//     textSize(16);
-//     rect(0, depth - 20, width, 20);
-//     fill(color(0));
-//     text(`time step: ${time_step}`, 8, depth - 2);
-// }
-
 function nextFrame() {
     // update state function
     updateState();
     drawLayer(time_step);
-    // filter(BLUR, 10);
     time_step += 1;
     if (time_step < depth) {
         setTimeout(nextFrame, time_interval);
@@ -294,9 +297,22 @@ function updateState() {
             let x = i * cell_size;
             let y = j * cell_size;
 
-            // use 3x3 neighborhood from layer z-1 to compute state at layer z
-            let neighbor_states = convert2DneighborhoodTo1D(i, j, z);
+            // // use 3x3 neighborhood from layer z-1 to compute state at layer z
+            
+            // use the sum of neighbor states as the key for the rule map
+            // let neighbor_sum = 0;
+            // for (let di = -1; di <= 1; di++) {
+            //     for (let dj = -1; dj <= 1; dj++) {
+            //         let neighbor_x = wrapIndex(i + di, cols);
+            //         let neighbor_y = wrapIndex(j + dj, rows);
+            //         let state = grid[neighbor_x][neighbor_y][z - 1].state;
+            //         neighbor_sum += state;
+            //     }
+            // }
+            // let neighbor_states = neighbor_sum.toString();
             // console.log(`Neighbor states for cell (${i}, ${j}, ${z}):`, neighbor_states);
+            
+            let neighbor_states = convert2DneighborhoodTo1D(i, j, z);
             let new_state = rule_map.get(neighbor_states);
             if (new_state === undefined) {
                 // Fallback for neighborhood keys missing in the simplified rule map.
