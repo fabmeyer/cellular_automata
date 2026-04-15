@@ -17,7 +17,7 @@ const cell_size = 4;
 let grid = new Array(cols).fill().map(() => new Array(rows).fill().map(() => new Array(depth).fill(null)));
 
 // simulation parameters
-const time_interval = 5;
+const time_interval = 100;
 const n_states = 3; // number of different states
 // assert n_states is less than 10, otherwise the rule map will be too large to handle
 if (n_states >= 10) {
@@ -160,6 +160,7 @@ function generateRules() {
 
 function convert2DneighborhoodTo1D(x, y, z) {
     // Encode neighborhood as counts per state (order-invariant key).
+    // format example: "9,0,0" for 9 neighbors in state 0 and 0 neighbors in states 1 and 2.
     let counts = new Array(n_states).fill(0);
     for (let i = -1; i <= 1; i++) {
         for (let j = -1; j <= 1; j++) {
@@ -182,7 +183,7 @@ function printRuleMapAsNumber() {
     let rule_number = parseInt(rule, n_states);
     // console.log(`Rule number (decimal): ${rule_number}`);
 }
-printRuleMapAsNumber();
+// printRuleMapAsNumber();
 
 function d4Representative(i, j, size) {
     const transforms = [
@@ -329,11 +330,168 @@ function drawLayer(zIndex) {
     pop();
 }
 
+class memory_cell {
+    constructor(n_states) {
+        this.items = [];
+        this.hashes = [];
+        this.zIndices = [];
+        this.n_states = n_states;
+        this.capacity = n_states * n_states;
+        this.rowLength = rows;
+        this.head = 0;
+        this.matchIndices = [];
+        this.matchHead = 0;
+        this.latestMatchedPastZIndices = [];
+        this.latestConsecutiveRun = [];
+    }
+
+    extractRowStates(grid, zIndex) {
+        const rowStates = new Uint8Array(this.rowLength);
+        for (let y = 0; y < this.rowLength; y++) {
+            rowStates[y] = grid[0][y][zIndex].state;
+        }
+        return rowStates;
+    }
+
+    hashRow(rowStates) {
+        let hash = 2166136261;
+        for (let i = 0; i < rowStates.length; i++) {
+            hash ^= rowStates[i];
+            hash = Math.imul(hash, 16777619);
+        }
+        return hash >>> 0;
+    }
+
+    addLayer(grid, zIndex) {
+        const rowStates = this.extractRowStates(grid, zIndex);
+        const hash = this.hashRow(rowStates);
+
+        if (this.items.length < this.capacity) {
+            this.items.push(rowStates);
+            this.hashes.push(hash);
+            this.zIndices.push(zIndex);
+            this.head = this.items.length % this.capacity;
+            return;
+        }
+
+        this.items[this.head] = rowStates;
+        this.hashes[this.head] = hash;
+        this.zIndices[this.head] = zIndex;
+        this.head = (this.head + 1) % this.capacity;
+    }
+
+    compareRows(rowA, rowB) {
+        for (let i = 0; i < rowA.length; i++) {
+            if (rowA[i] !== rowB[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    addMatch(zIndex) {
+        if (this.matchIndices.length < this.capacity) {
+            this.matchIndices.push(zIndex);
+            this.matchHead = this.matchIndices.length % this.capacity;
+            return;
+        }
+
+        this.matchIndices[this.matchHead] = zIndex;
+        this.matchHead = (this.matchHead + 1) % this.capacity;
+    }
+
+    getOrderedMatches() {
+        if (this.matchIndices.length < this.capacity) {
+            return this.matchIndices.slice();
+        }
+
+        return this.matchIndices
+            .slice(this.matchHead)
+            .concat(this.matchIndices.slice(0, this.matchHead));
+    }
+
+    getLatestConsecutiveMatchRun() {
+        const orderedMatches = this.getOrderedMatches();
+        if (orderedMatches.length === 0) {
+            return [];
+        }
+
+        const run = [orderedMatches[orderedMatches.length - 1]];
+        for (let i = orderedMatches.length - 2; i >= 0; i--) {
+            if (orderedMatches[i] + 1 !== run[0]) {
+                break;
+            }
+            run.unshift(orderedMatches[i]);
+        }
+
+        return run;
+    }
+
+    compareLatestRow() {
+        if (this.items.length < 2) {
+            this.latestMatchedPastZIndices = [];
+            this.latestConsecutiveRun = [];
+            return false;
+        }
+
+        const latestIndex = (this.head + this.items.length - 1) % this.items.length;
+        const latestRow = this.items[latestIndex];
+        const latestHash = this.hashes[latestIndex];
+        const latestZIndex = this.zIndices[latestIndex];
+        const matchedPastZIndices = [];
+
+        for (let i = 0; i < this.items.length; i++) {
+            if (i === latestIndex || this.hashes[i] !== latestHash) {
+                continue;
+            }
+
+            if (this.compareRows(latestRow, this.items[i])) {
+                matchedPastZIndices.push(this.zIndices[i]);
+            }
+        }
+
+        this.latestMatchedPastZIndices = matchedPastZIndices;
+
+        if (matchedPastZIndices.length === 0) {
+            this.latestConsecutiveRun = [];
+            return false;
+        }
+
+        console.log(`Match found for z=${latestZIndex} with past z-indices:`, matchedPastZIndices, `hash=${latestHash}`);
+
+        this.addMatch(latestZIndex);
+        const consecutiveRun = this.getLatestConsecutiveMatchRun();
+        this.latestConsecutiveRun = consecutiveRun;
+        if (consecutiveRun.length > 1) {
+            console.log("Consecutive matched z-indices:", consecutiveRun);
+        }
+
+        if (consecutiveRun.length === this.capacity) {
+            console.log("Every z-index in the latest run has a matching past row:", consecutiveRun);
+            return true;
+        }
+
+        return false;
+    }
+
+    getLatestRow() {
+        if (this.items.length === 0) {
+            return null;
+        }
+
+        const latestIndex = (this.head + this.items.length - 1) % this.items.length;
+        return this.items[latestIndex];
+    }
+}
+
+let memory_cell_instance = new memory_cell(n_states);
+
 function setup() {
     createCanvas(cols * cell_size * 3, rows * cell_size * 3, WEBGL);
     ortho(-480, 480, 480, -480, -2000, 2000);
     background(10);
     initializeGrid();
+    memory_cell_instance.addLayer(grid, 0);
     drawLayer(0);
     time_step += 1;
     setTimeout(() => {
@@ -345,6 +503,10 @@ function nextFrame() {
     // update state function
     updateState();
     drawLayer(time_step);
+    memory_cell_instance.addLayer(grid, time_step);
+    if (memory_cell_instance.compareLatestRow()) {
+        // Handle the case when every z-index in the latest run has a matching past row
+    }
     time_step += 1;
     if (time_step < depth) {
         setTimeout(nextFrame, time_interval);
