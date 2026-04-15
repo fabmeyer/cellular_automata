@@ -10,7 +10,7 @@ class Cell {
 // grid parameters
 const cols = 96;
 const rows = 96;
-const depth = 96;
+const depth = 192;
 const cell_size = 4;
 
 // create a 3D array with given number of columns, rows, and depth
@@ -50,7 +50,7 @@ let rule_map = generateRules();
 function generateRules() {
     // Count-based rule classes (multiset): order does not matter.
     // Number of classes is C(neighbor_count + n_states - 1, n_states - 1).
-    p_c_0 = 0.75 // probability of a class mapping to state 0 (empty)
+    p_c_0 = 0.85 // probability of a class mapping to state 0 (empty)
     let rule_map = new Map();
     function buildCountVectors(remaining, stateIndex, counts) {
         if (stateIndex === n_states - 1) {
@@ -68,6 +68,11 @@ function generateRules() {
 
     buildCountVectors(neighbor_count, 0, new Array(n_states).fill(0));
     // console.log(rule_map);
+
+    // hack rule map: replace the class with all neighbors in state 0 to map to state 1
+    rule_map.set('9,0,0', 1); // all neighbors in state 0 maps to state 1 (growth from empty)
+    rule_map.set('0,9,0', 2); // all neighbors in state 1 maps to state 2 (growth from state 1)
+    rule_map.set('0,0,9', 0); // all neighbors in state 2 maps to state 0 (growth from state 2)
     return rule_map;
 }
 
@@ -83,6 +88,12 @@ function generateRules() {
 //     }
 //     // console.log(rule_map);
 //     return rule_map;
+// }
+
+// // version 3
+// function generateRules() {
+//     // using majority voting
+//     let rule_map = new Map();
 // }
 
 function convert2DneighborhoodTo1D(x, y, z) {
@@ -159,19 +170,15 @@ function initializeGrid() {
             grid[i][j][0] = new Cell(x, y, 0, initial_layer);
         }
     }
-
-    const pattern_size = 12;
+    const pattern_size = 4;
     const tiled_size = pattern_size * 2;
-
     // Build one random matrix, then project each cell to a canonical D4 orbit representative.
     const seed = new Array(tiled_size)
     .fill(null)
     .map(() => new Array(tiled_size).fill(null).map(() => Math.floor(Math.random() * n_states)));
-
     const seed_d4 = new Array(tiled_size)
     .fill(null)
     .map(() => new Array(tiled_size).fill(0));
-
     for (let i = 0; i < tiled_size; i++) {
         for (let j = 0; j < tiled_size; j++) {
             const rep = d4Representative(i, j, tiled_size);
@@ -203,15 +210,28 @@ function initializeGrid() {
     //     }
     // }
 
-    // Place the centered D4-symmetric seed block.
+    // // Place the centered D4-symmetric seed block.
+    // const x_offset = Math.floor((cols - tiled_size) / 2);
+    // const y_offset = Math.floor((rows - tiled_size) / 2);
+    // for (let i = 0; i < tiled_size; i++) {
+    //     for (let j = 0; j < tiled_size; j++) {
+    //         const x = (x_offset + i) * cell_size;
+    //         const y = (y_offset + j) * cell_size;
+    //         const state = seed_d4[i][j];
+    //         grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
+    //     }
+    // }
+
+    // Place the D4-symmetric block at the corners, leaving the center empty.
     const x_offset = Math.floor((cols - tiled_size) / 2);
     const y_offset = Math.floor((rows - tiled_size) / 2);
     for (let i = 0; i < tiled_size; i++) {
         for (let j = 0; j < tiled_size; j++) {
-            const x = (x_offset + i) * cell_size;
-            const y = (y_offset + j) * cell_size;
             const state = seed_d4[i][j];
-            grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
+            grid[i][j][0] = new Cell(i * cell_size, j * cell_size, 0, state); // top-left
+            grid[cols - tiled_size + i][j][0] = new Cell((cols - tiled_size + i) * cell_size, j * cell_size, 0, state); // top-right
+            grid[i][rows - tiled_size + j][0] = new Cell(i * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-left
+            grid[cols - tiled_size + i][rows - tiled_size + j][0] = new Cell((cols - tiled_size + i) * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-right
         }
     }
 }
@@ -248,8 +268,8 @@ function drawLayer(zIndex) {
 }
 
 function setup() {
-    createCanvas(cols * cell_size * 1.5, rows * cell_size * 1.5, WEBGL);
-    ortho(-320, 320, 320, -320, -2000, 2000);
+    createCanvas(cols * cell_size * 3, rows * cell_size * 3, WEBGL);
+    ortho(-480, 480, 480, -480, -2000, 2000);
     background(10);
     initializeGrid();
     drawLayer(0);
