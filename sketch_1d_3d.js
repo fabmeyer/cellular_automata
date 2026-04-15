@@ -45,38 +45,52 @@ function getRandomColor() {
     return colors;
 }
 
-// version 1
-let rule_map = generateRules();
-function generateRules() {
-    // Count-based rule classes (multiset): order does not matter.
-    // Number of classes is C(neighbor_count + n_states - 1, n_states - 1).
-    p_c_0 = 0.85 // probability of a class mapping to state 0 (empty)
-    let rule_map = new Map();
-    function buildCountVectors(remaining, stateIndex, counts) {
-        if (stateIndex === n_states - 1) {
-            counts[stateIndex] = remaining;
-            let key = counts.join(',');
-            let value = Math.random() < p_c_0 ? 0 : 1 + Math.floor(Math.random() * (n_states - 1));
-            rule_map.set(key, value);
-            return;
-        }
-        for (let count = 0; count <= remaining; count++) {
-            counts[stateIndex] = count;
-            buildCountVectors(remaining - count, stateIndex + 1, counts);
-        }
+function hack_rule_map(n_states, rule_map) {
+    // For a fully uniform neighborhood, advance to the next state in a cycle.
+    // Example for n_states = 4:
+    //   9,0,0,0 -> 1
+    //   0,9,0,0 -> 2
+    //   0,0,9,0 -> 3
+    //   0,0,0,9 -> 0
+    for (let state = 0; state < n_states; state++) {
+        const counts = new Array(n_states).fill(0);
+        counts[state] = neighbor_count;
+        const key = counts.join(',');
+        const nextState = (state + 1) % n_states;
+        rule_map.set(key, nextState);
     }
 
-    buildCountVectors(neighbor_count, 0, new Array(n_states).fill(0));
-    // console.log(rule_map);
-
-    // hack rule map: replace the class with all neighbors in state 0 to map to state 1
-    rule_map.set('9,0,0', 1); // all neighbors in state 0 maps to state 1 (growth from empty)
-    rule_map.set('0,9,0', 2); // all neighbors in state 1 maps to state 2 (growth from state 1)
-    rule_map.set('0,0,9', 0); // all neighbors in state 2 maps to state 0 (growth from state 2)
     return rule_map;
 }
 
-// version 2
+// // version 1 using counts (multiset)
+// let rule_map = generateRules();
+// function generateRules() {
+//     // Count-based rule classes (multiset): order does not matter.
+//     // Number of classes is C(neighbor_count + n_states - 1, n_states - 1).
+//     p_c_0 = 0.85 // probability of a class mapping to state 0 (empty)
+//     let rule_map = new Map();
+//     function buildCountVectors(remaining, stateIndex, counts) {
+//         if (stateIndex === n_states - 1) {
+//             counts[stateIndex] = remaining;
+//             let key = counts.join(',');
+//             let value = Math.random() < p_c_0 ? 0 : 1 + Math.floor(Math.random() * (n_states - 1));
+//             rule_map.set(key, value);
+//             return;
+//         }
+//         for (let count = 0; count <= remaining; count++) {
+//             counts[stateIndex] = count;
+//             buildCountVectors(remaining - count, stateIndex + 1, counts);
+//         }
+//     }
+
+//     buildCountVectors(neighbor_count, 0, new Array(n_states).fill(0));
+//     rule_map = hack_rule_map(n_states, rule_map);
+//     return rule_map;
+// }
+
+// version 2 using sum of neighbors states
+// let rule_map = generateRules();
 // function generateRules() {
 //     // Using the sum of neighbor states as the key for the rule map,
 //     // which reduces the number of keys to n_states * neighbor_count (e.g. 3*9=27 for n_states=3 and neighbor_count=9).
@@ -90,11 +104,59 @@ function generateRules() {
 //     return rule_map;
 // }
 
-// // version 3
-// function generateRules() {
-//     // using majority voting
-//     let rule_map = new Map();
-// }
+// version 3 using majority-voting
+let rule_map = generateRules();
+function generateRules() {
+    // Majority voting keyed by neighborhood counts plus the current state.
+    // Key format: "count0,count1,...,currentState"
+    // The old count-only rule maps remain compatible because updateState()
+    // still tries the plain neighborhood-count key first.
+    let rule_map = new Map();
+    function buildRuleKey(counts, currentState) {
+        return [...counts, currentState].join(',');
+    }
+    function resolveMajorityState(counts, currentState) {
+        let maxCount = -1;
+        let tiedStates = [];
+        for (let state = 0; state < counts.length; state++) {
+            const count = counts[state];
+            if (count > maxCount) {
+                maxCount = count;
+                tiedStates = [state];
+            } else if (count === maxCount) {
+                tiedStates.push(state);
+            }
+        }
+        if (tiedStates.length === 1) {
+            return tiedStates[0];
+        }
+        if (tiedStates.includes(currentState)) {
+            return currentState;
+        }
+        return 0;
+    }
+    function buildCountVectors(remaining, stateIndex, counts) {
+        if (stateIndex === n_states - 1) {
+            counts[stateIndex] = remaining;
+            for (let currentState = 0; currentState < n_states; currentState++) {
+                const key = buildRuleKey(counts, currentState);
+                const value = resolveMajorityState(counts, currentState);
+                rule_map.set(key, value);
+            }
+            return;
+        }
+        for (let count = 0; count <= remaining; count++) {
+            counts[stateIndex] = count;
+            buildCountVectors(remaining - count, stateIndex + 1, counts);
+        }
+    }
+    buildCountVectors(neighbor_count, 0, new Array(n_states).fill(0));
+    // Plain count-only overrides stay backward-compatible because updateState()
+    // tries the neighborhood-only key before the majority-voting key.
+    rule_map = hack_rule_map(n_states, rule_map);
+    console.log("Rule map:", rule_map);
+    return rule_map;
+}
 
 function convert2DneighborhoodTo1D(x, y, z) {
     // Encode neighborhood as counts per state (order-invariant key).
@@ -170,8 +232,8 @@ function initializeGrid() {
             grid[i][j][0] = new Cell(x, y, 0, initial_layer);
         }
     }
-    const pattern_size = 4;
-    const tiled_size = pattern_size * 2;
+    const pattern_size = 24;
+    const tiled_size = pattern_size * 4;
     // Build one random matrix, then project each cell to a canonical D4 orbit representative.
     const seed = new Array(tiled_size)
     .fill(null)
@@ -210,30 +272,30 @@ function initializeGrid() {
     //     }
     // }
 
-    // // Place the centered D4-symmetric seed block.
-    // const x_offset = Math.floor((cols - tiled_size) / 2);
-    // const y_offset = Math.floor((rows - tiled_size) / 2);
-    // for (let i = 0; i < tiled_size; i++) {
-    //     for (let j = 0; j < tiled_size; j++) {
-    //         const x = (x_offset + i) * cell_size;
-    //         const y = (y_offset + j) * cell_size;
-    //         const state = seed_d4[i][j];
-    //         grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
-    //     }
-    // }
-
-    // Place the D4-symmetric block at the corners, leaving the center empty.
+    // Place the centered D4-symmetric seed block.
     const x_offset = Math.floor((cols - tiled_size) / 2);
     const y_offset = Math.floor((rows - tiled_size) / 2);
     for (let i = 0; i < tiled_size; i++) {
         for (let j = 0; j < tiled_size; j++) {
+            const x = (x_offset + i) * cell_size;
+            const y = (y_offset + j) * cell_size;
             const state = seed_d4[i][j];
-            grid[i][j][0] = new Cell(i * cell_size, j * cell_size, 0, state); // top-left
-            grid[cols - tiled_size + i][j][0] = new Cell((cols - tiled_size + i) * cell_size, j * cell_size, 0, state); // top-right
-            grid[i][rows - tiled_size + j][0] = new Cell(i * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-left
-            grid[cols - tiled_size + i][rows - tiled_size + j][0] = new Cell((cols - tiled_size + i) * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-right
+            grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
         }
     }
+
+    // // Place the D4-symmetric block at the corners, leaving the center empty.
+    // const x_offset = Math.floor((cols - tiled_size) / 2);
+    // const y_offset = Math.floor((rows - tiled_size) / 2);
+    // for (let i = 0; i < tiled_size; i++) {
+    //     for (let j = 0; j < tiled_size; j++) {
+    //         const state = seed_d4[i][j];
+    //         grid[i][j][0] = new Cell(i * cell_size, j * cell_size, 0, state); // top-left
+    //         grid[cols - tiled_size + i][j][0] = new Cell((cols - tiled_size + i) * cell_size, j * cell_size, 0, state); // top-right
+    //         grid[i][rows - tiled_size + j][0] = new Cell(i * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-left
+    //         grid[cols - tiled_size + i][rows - tiled_size + j][0] = new Cell((cols - tiled_size + i) * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-right
+    //     }
+    // }
 }
 
 // console.log("Initial grid:", grid);
@@ -332,8 +394,15 @@ function updateState() {
             // let neighbor_states = neighbor_sum.toString();
             // console.log(`Neighbor states for cell (${i}, ${j}, ${z}):`, neighbor_states);
             
-            let neighbor_states = convert2DneighborhoodTo1D(i, j, z);
+            const current_state = grid[i][j][z - 1].state;
+            const neighbor_states = convert2DneighborhoodTo1D(i, j, z);
+
+            // Support both key formats so switching rule maps only requires
+            // commenting/uncommenting generateRules().
             let new_state = rule_map.get(neighbor_states);
+            if (new_state === undefined) {
+                new_state = rule_map.get(`${neighbor_states},${current_state}`);
+            }
             if (new_state === undefined) {
                 // Fallback for neighborhood keys missing in the simplified rule map.
                 new_state = Math.floor(Math.random() * n_states);
