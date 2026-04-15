@@ -158,6 +158,31 @@ function generateRules() {
     return rule_map;
 }
 
+function manipulateRuleMap(rule_map) {
+    // change a random entry in the rule map to a random state
+    // which is different from the original state
+    const keys = Array.from(rule_map.keys());
+    const randomKey = keys[Math.floor(Math.random() * keys.length)];
+    const originalValue = rule_map.get(randomKey);
+    console.log(`Manipulating rule map at key: ${randomKey}`);
+    console.log(`Original state for this key: ${originalValue}`);
+    // check if the randomKey is a fully uniform neighborhood key
+    // and if so, cycle to the next state instead of randomizing
+    // it contains one nonzero count and the rest are zeroes
+    const counts = randomKey.split(',').slice(0, n_states).map(Number);
+    const nonzeroCounts = counts.filter(count => count > 0);
+    if (nonzeroCounts.length === 1) {
+        manipulateRuleMap(rule_map);
+    } else {
+        let newValue;
+        do {
+            newValue = Math.floor(Math.random() * n_states);
+        } while (newValue === originalValue);
+        rule_map.set(randomKey, newValue);
+        console.log(`New state for this key: ${newValue}`);
+    }
+}
+
 function convert2DneighborhoodTo1D(x, y, z) {
     // Encode neighborhood as counts per state (order-invariant key).
     // format example: "9,0,0" for 9 neighbors in state 0 and 0 neighbors in states 1 and 2.
@@ -335,8 +360,7 @@ class memory_cell {
         this.items = [];
         this.hashes = [];
         this.zIndices = [];
-        this.n_states = n_states;
-        this.capacity = n_states * n_states;
+        this.capacity = 2 * n_states * n_states;
         this.rowLength = rows;
         this.head = 0;
         this.matchIndices = [];
@@ -362,22 +386,37 @@ class memory_cell {
         return hash >>> 0;
     }
 
+    getLatestIndex(length, head) {
+        return (head + length - 1) % length;
+    }
+
+    pushRingValue(buffer, head, value) {
+        if (buffer.length < this.capacity) {
+            buffer.push(value);
+            return buffer.length % this.capacity;
+        }
+
+        buffer[head] = value;
+        return (head + 1) % this.capacity;
+    }
+
+    getOrderedRing(buffer, head) {
+        if (buffer.length < this.capacity) {
+            return buffer.slice();
+        }
+
+        return buffer.slice(head).concat(buffer.slice(0, head));
+    }
+
     addLayer(grid, zIndex) {
         const rowStates = this.extractRowStates(grid, zIndex);
         const hash = this.hashRow(rowStates);
+        const index = this.items.length < this.capacity ? this.items.length : this.head;
 
-        if (this.items.length < this.capacity) {
-            this.items.push(rowStates);
-            this.hashes.push(hash);
-            this.zIndices.push(zIndex);
-            this.head = this.items.length % this.capacity;
-            return;
-        }
-
-        this.items[this.head] = rowStates;
-        this.hashes[this.head] = hash;
-        this.zIndices[this.head] = zIndex;
-        this.head = (this.head + 1) % this.capacity;
+        this.items[index] = rowStates;
+        this.hashes[index] = hash;
+        this.zIndices[index] = zIndex;
+        this.head = this.items.length < this.capacity ? this.items.length % this.capacity : (this.head + 1) % this.capacity;
     }
 
     compareRows(rowA, rowB) {
@@ -390,24 +429,11 @@ class memory_cell {
     }
 
     addMatch(zIndex) {
-        if (this.matchIndices.length < this.capacity) {
-            this.matchIndices.push(zIndex);
-            this.matchHead = this.matchIndices.length % this.capacity;
-            return;
-        }
-
-        this.matchIndices[this.matchHead] = zIndex;
-        this.matchHead = (this.matchHead + 1) % this.capacity;
+        this.matchHead = this.pushRingValue(this.matchIndices, this.matchHead, zIndex);
     }
 
     getOrderedMatches() {
-        if (this.matchIndices.length < this.capacity) {
-            return this.matchIndices.slice();
-        }
-
-        return this.matchIndices
-            .slice(this.matchHead)
-            .concat(this.matchIndices.slice(0, this.matchHead));
+        return this.getOrderedRing(this.matchIndices, this.matchHead);
     }
 
     getLatestConsecutiveMatchRun() {
@@ -415,7 +441,6 @@ class memory_cell {
         if (orderedMatches.length === 0) {
             return [];
         }
-
         const run = [orderedMatches[orderedMatches.length - 1]];
         for (let i = orderedMatches.length - 2; i >= 0; i--) {
             if (orderedMatches[i] + 1 !== run[0]) {
@@ -423,8 +448,19 @@ class memory_cell {
             }
             run.unshift(orderedMatches[i]);
         }
-
         return run;
+    }
+
+    findMatchingPastZIndices(latestIndex) {
+        const latestRow = this.items[latestIndex];
+        const latestHash = this.hashes[latestIndex];
+        const matches = [];
+        for (let i = 0; i < this.items.length; i++) {
+            if (i !== latestIndex && this.hashes[i] === latestHash && this.compareRows(latestRow, this.items[i])) {
+                matches.push(this.zIndices[i]);
+            }
+        }
+        return matches;
     }
 
     compareLatestRow() {
@@ -433,44 +469,26 @@ class memory_cell {
             this.latestConsecutiveRun = [];
             return false;
         }
-
-        const latestIndex = (this.head + this.items.length - 1) % this.items.length;
-        const latestRow = this.items[latestIndex];
+        const latestIndex = this.getLatestIndex(this.items.length, this.head);
         const latestHash = this.hashes[latestIndex];
         const latestZIndex = this.zIndices[latestIndex];
-        const matchedPastZIndices = [];
-
-        for (let i = 0; i < this.items.length; i++) {
-            if (i === latestIndex || this.hashes[i] !== latestHash) {
-                continue;
-            }
-
-            if (this.compareRows(latestRow, this.items[i])) {
-                matchedPastZIndices.push(this.zIndices[i]);
-            }
-        }
-
+        const matchedPastZIndices = this.findMatchingPastZIndices(latestIndex);
         this.latestMatchedPastZIndices = matchedPastZIndices;
-
         if (matchedPastZIndices.length === 0) {
             this.latestConsecutiveRun = [];
             return false;
         }
-
         console.log(`Match found for z=${latestZIndex} with past z-indices:`, matchedPastZIndices, `hash=${latestHash}`);
-
         this.addMatch(latestZIndex);
         const consecutiveRun = this.getLatestConsecutiveMatchRun();
         this.latestConsecutiveRun = consecutiveRun;
         if (consecutiveRun.length > 1) {
             console.log("Consecutive matched z-indices:", consecutiveRun);
         }
-
-        if (consecutiveRun.length === this.capacity) {
+        if (consecutiveRun.length >= Math.floor(this.capacity / 2)) {
             console.log("Every z-index in the latest run has a matching past row:", consecutiveRun);
             return true;
         }
-
         return false;
     }
 
@@ -478,9 +496,7 @@ class memory_cell {
         if (this.items.length === 0) {
             return null;
         }
-
-        const latestIndex = (this.head + this.items.length - 1) % this.items.length;
-        return this.items[latestIndex];
+        return this.items[this.getLatestIndex(this.items.length, this.head)];
     }
 }
 
@@ -506,6 +522,7 @@ function nextFrame() {
     memory_cell_instance.addLayer(grid, time_step);
     if (memory_cell_instance.compareLatestRow()) {
         // Handle the case when every z-index in the latest run has a matching past row
+        manipulateRuleMap(rule_map);
     }
     time_step += 1;
     if (time_step < depth) {
