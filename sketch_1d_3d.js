@@ -17,7 +17,7 @@ const cell_size = 4;
 let grid = new Array(cols).fill().map(() => new Array(rows).fill().map(() => new Array(depth).fill(null)));
 
 // simulation parameters
-const time_interval = 100;
+const time_interval = 10;
 const n_states = 3; // number of different states
 // assert n_states is less than 10, otherwise the rule map will be too large to handle
 if (n_states >= 10) {
@@ -60,6 +60,7 @@ function hack_rule_map(n_states, rule_map) {
         rule_map.set(key, nextState);
     }
 
+    // rule_map.set(`0,0,9`, 3); // randomness
     return rule_map;
 }
 
@@ -258,8 +259,8 @@ function initializeGrid() {
             grid[i][j][0] = new Cell(x, y, 0, initial_layer);
         }
     }
-    const pattern_size = 24;
-    const tiled_size = pattern_size * 4;
+    const pattern_size = 32;
+    const tiled_size = pattern_size * 3;
     // Build one random matrix, then project each cell to a canonical D4 orbit representative.
     const seed = new Array(tiled_size)
     .fill(null)
@@ -276,15 +277,15 @@ function initializeGrid() {
 
     // console.log("Initial D4 seed matrix:", seed_d4);
     
-    // // Tile the seed matrix across the full x/y plane at z=0.
-    // for (let i = 0; i < cols; i++) {
-    //     for (let j = 0; j < rows; j++) {
-    //         const x = i * cell_size;
-    //         const y = j * cell_size;
-    //         const state = seed[i % pattern_size][j % pattern_size];
-    //         grid[i][j][0] = new Cell(x, y, 0, state);
-    //     }
-    // }
+    // Tile the seed matrix across the full x/y plane at z=0.
+    for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+            const x = i * cell_size;
+            const y = j * cell_size;
+            const state = seed[i % pattern_size][j % pattern_size];
+            grid[i][j][0] = new Cell(x, y, 0, state);
+        }
+    }
 
     // // Tile the seed matrix only in the center of the x/y plane at z=0, leaving the borders empty.
     // const x_offset = Math.floor((cols - pattern_size) / 2);
@@ -298,17 +299,17 @@ function initializeGrid() {
     //     }
     // }
 
-    // Place the centered D4-symmetric seed block.
-    const x_offset = Math.floor((cols - tiled_size) / 2);
-    const y_offset = Math.floor((rows - tiled_size) / 2);
-    for (let i = 0; i < tiled_size; i++) {
-        for (let j = 0; j < tiled_size; j++) {
-            const x = (x_offset + i) * cell_size;
-            const y = (y_offset + j) * cell_size;
-            const state = seed_d4[i][j];
-            grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
-        }
-    }
+    // // Place the centered D4-symmetric seed block.
+    // const x_offset = Math.floor((cols - tiled_size) / 2);
+    // const y_offset = Math.floor((rows - tiled_size) / 2);
+    // for (let i = 0; i < tiled_size; i++) {
+    //     for (let j = 0; j < tiled_size; j++) {
+    //         const x = (x_offset + i) * cell_size;
+    //         const y = (y_offset + j) * cell_size;
+    //         const state = seed_d4[i][j];
+    //         grid[x_offset + i][y_offset + j][0] = new Cell(x, y, 0, state);
+    //     }
+    // }
 
     // // Place the D4-symmetric block at the corners, leaving the center empty.
     // const x_offset = Math.floor((cols - tiled_size) / 2);
@@ -507,7 +508,7 @@ function setup() {
     ortho(-480, 480, 480, -480, -2000, 2000);
     background(10);
     initializeGrid();
-    memory_cell_instance.addLayer(grid, 0);
+    // memory_cell_instance.addLayer(grid, 0);
     drawLayer(0);
     time_step += 1;
     setTimeout(() => {
@@ -519,11 +520,11 @@ function nextFrame() {
     // update state function
     updateState();
     drawLayer(time_step);
-    memory_cell_instance.addLayer(grid, time_step);
-    if (memory_cell_instance.compareLatestRow()) {
-        // Handle the case when every z-index in the latest run has a matching past row
-        manipulateRuleMap(rule_map);
-    }
+    // memory_cell_instance.addLayer(grid, time_step);
+    // if (memory_cell_instance.compareLatestRow()) {
+    //     // Handle the case when every z-index in the latest run has a matching past row
+    //     manipulateRuleMap(rule_map);
+    // }
     time_step += 1;
     if (time_step < depth) {
         setTimeout(nextFrame, time_interval);
