@@ -18,9 +18,15 @@ const cell_size = 4;
 let grid = new Array(cols).fill().map(() => new Array(rows).fill().map(() => new Array(depth).fill(null)));
 
 // simulation parameters
-const time_interval = 10;
-const n_states = 3; // number of different states
-const pattern_size = 16;
+const time_interval = 1;
+const n_states = 2; // number of different states
+const forward_probability = 0.5;
+const noise_space_scale = 0.1;
+const noise_time_scale = 0.1;
+if (!Number.isFinite(forward_probability) || forward_probability < 0 || forward_probability > 1) {
+    throw new Error("forward_probability must be a finite number between 0 and 1");
+}
+const pattern_size = 32;
 const divisor = 3;
 const neighborhood_size = 2 * Math.floor(pattern_size / divisor) + 1; // odd side length
 // assert n_states is less than 10, otherwise the rule map will be too large to handle
@@ -40,13 +46,13 @@ let time_step = 0;
 var colors = getRandomColor();
 function getRandomColor() {
     let colors = [];
-    colors.push('rgba(0, 0, 0, 0.5)'); // transparent for state 0
+    colors.push('rgba(0, 0, 0, 0.05)'); // transparent for state 0
     for (let i = 1; i < n_states; i++) {
     // for (let i = 0; i < n_states; i++) {
         const r = Math.floor(Math.random() * 255);
         const g = Math.floor(Math.random() * 255);
         const b = Math.floor(Math.random() * 255);
-        colors.push(`rgb(${r}, ${g}, ${b})`);
+        colors.push(`rgba(${r}, ${g}, ${b}, 0.95)`);
     }
     // console.log(colors);
     return colors;
@@ -114,58 +120,146 @@ function hack_rule_map(n_states, rule_map) {
 //     return rule_map;
 // }
 
-// version 3 using majority-voting
+// // version 3 using majority-voting
+// let rule_map = generateRules();
+// function generateRules() {
+//     // Majority voting keyed by neighborhood counts plus the current state.
+//     // Key format: "count0,count1,...,currentState"
+//     // The old count-only rule maps remain compatible because updateState()
+//     // still tries the plain neighborhood-count key first.
+//     let rule_map = new Map();
+//     function buildRuleKey(counts, currentState) {
+//         return [...counts, currentState].join(',');
+//     }
+//     function resolveMajorityState(counts, currentState) {
+//         let maxCount = -1;
+//         let tiedStates = [];
+//         for (let state = 0; state < counts.length; state++) {
+//             const count = counts[state];
+//             if (count > maxCount) {
+//                 maxCount = count;
+//                 tiedStates = [state];
+//             } else if (count === maxCount) {
+//                 tiedStates.push(state);
+//             }
+//         }
+//         if (tiedStates.length === 1) {
+//             return tiedStates[0];
+//         }
+//         if (tiedStates.includes(currentState)) {
+//             return currentState;
+//         }
+//         return 0;
+//     }
+//     function buildCountVectors(remaining, stateIndex, counts) {
+//         if (stateIndex === n_states - 1) {
+//             counts[stateIndex] = remaining;
+//             for (let currentState = 0; currentState < n_states; currentState++) {
+//                 const key = buildRuleKey(counts, currentState);
+//                 const value = resolveMajorityState(counts, currentState);
+//                 rule_map.set(key, value);
+//             }
+//             return;
+//         }
+//         for (let count = 0; count <= remaining; count++) {
+//             counts[stateIndex] = count;
+//             buildCountVectors(remaining - count, stateIndex + 1, counts);
+//         }
+//     }
+//     buildCountVectors(neighbor_count, 0, new Array(n_states).fill(0));
+//     // Plain count-only overrides stay backward-compatible because updateState()
+//     // tries the neighborhood-only key before the majority-voting key.
+//     rule_map = hack_rule_map(n_states, rule_map);
+//     console.log("Rule map:", rule_map);
+//     return rule_map;
+// }
+
+// version 4 using Perlin noise
+const movement_directions = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0],           [1, 0],
+    [-1, 1],  [0, 1],  [1, 1]
+];
+
+let movement_history = new Map();
+
 let rule_map = generateRules();
 function generateRules() {
-    // Majority voting keyed by neighborhood counts plus the current state.
-    // Key format: "count0,count1,...,currentState"
-    // The old count-only rule maps remain compatible because updateState()
-    // still tries the plain neighborhood-count key first.
-    let rule_map = new Map();
-    function buildRuleKey(counts, currentState) {
-        return [...counts, currentState].join(',');
+    const rule_map = new Map();
+    for (const [dx, dy] of movement_directions) {
+        const alternatives = [...movement_directions, [0, 0]]
+            .filter(([x, y]) => x !== dx || y !== dy);
+        rule_map.set(`move:${dx},${dy}`, [
+            { dx, dy, probability: forward_probability },
+            ...alternatives.map(([x, y]) => ({
+                dx: x,
+                dy: y,
+                probability: (1 - forward_probability) / 8
+            }))
+        ]);
     }
-    function resolveMajorityState(counts, currentState) {
-        let maxCount = -1;
-        let tiedStates = [];
-        for (let state = 0; state < counts.length; state++) {
-            const count = counts[state];
-            if (count > maxCount) {
-                maxCount = count;
-                tiedStates = [state];
-            } else if (count === maxCount) {
-                tiedStates.push(state);
-            }
-        }
-        if (tiedStates.length === 1) {
-            return tiedStates[0];
-        }
-        if (tiedStates.includes(currentState)) {
-            return currentState;
-        }
-        return 0;
-    }
-    function buildCountVectors(remaining, stateIndex, counts) {
-        if (stateIndex === n_states - 1) {
-            counts[stateIndex] = remaining;
-            for (let currentState = 0; currentState < n_states; currentState++) {
-                const key = buildRuleKey(counts, currentState);
-                const value = resolveMajorityState(counts, currentState);
-                rule_map.set(key, value);
-            }
-            return;
-        }
-        for (let count = 0; count <= remaining; count++) {
-            counts[stateIndex] = count;
-            buildCountVectors(remaining - count, stateIndex + 1, counts);
-        }
-    }
-    buildCountVectors(neighbor_count, 0, new Array(n_states).fill(0));
-    // Plain count-only overrides stay backward-compatible because updateState()
-    // tries the neighborhood-only key before the majority-voting key.
-    rule_map = hack_rule_map(n_states, rule_map);
-    console.log("Rule map:", rule_map);
     return rule_map;
+}
+
+function perlinDirection(x, y, z) {
+    const value = noise(x * noise_space_scale, y * noise_space_scale, z * noise_time_scale);
+    return movement_directions[Math.min(Math.floor(value * movement_directions.length), movement_directions.length - 1)];
+}
+
+function chooseMovement(direction, sample) {
+    const outcomes = rule_map.get(`move:${direction[0]},${direction[1]}`);
+    if (!outcomes) {
+        throw new Error(`Missing movement rule for direction ${direction}`);
+    }
+    let cumulative = 0;
+    for (const [index, outcome] of outcomes.entries()) {
+        cumulative += outcome.probability;
+        // Close the final interval at 1 despite floating-point summation.
+        const upper = index === outcomes.length - 1 ? 1 : cumulative;
+        if (sample >= 0 && sample < upper && outcome.probability > 0) {
+            return outcome;
+        }
+    }
+    throw new Error(`Invalid movement sample or probability distribution: ${sample}`);
+}
+
+function updateMovementState() {
+    const z = time_step;
+    const phase = Math.random();
+    const arrivals = new Map();
+    for (let x = 0; x < cols; x++) {
+        for (let y = 0; y < rows; y++) {
+            grid[x][y][z] = new Cell(x * cell_size, y * cell_size, z, 0);
+            if (grid[x][y][z - 1].state !== 1) {
+                continue;
+            }
+            const direction = movement_history.get(x * rows + y);
+            if (!direction) {
+                throw new Error(`Missing movement history for occupied cell (${x}, ${y})`);
+            }
+            const sample = (noise(x * noise_space_scale, y * noise_space_scale, (z - 1) * noise_time_scale) + phase) % 1;
+            const move = chooseMovement(direction, sample);
+            const targetX = wrapIndex(x + move.dx, cols);
+            const targetY = wrapIndex(y + move.dy, rows);
+            const key = targetX * rows + targetY;
+            const incoming = move.dx === 0 && move.dy === 0 ? direction : [move.dx, move.dy];
+            const sum = arrivals.get(key) || [0, 0];
+            sum[0] += incoming[0];
+            sum[1] += incoming[1];
+            arrivals.set(key, sum);
+        }
+    }
+    const next_history = new Map();
+    for (const [key, sum] of arrivals) {
+        const x = Math.floor(key / rows);
+        const y = key % rows;
+        grid[x][y][z].state = 1;
+        const direction = sum[0] === 0 && sum[1] === 0
+            ? perlinDirection(x, y, z)
+            : [Math.sign(sum[0]), Math.sign(sum[1])];
+        next_history.set(key, direction);
+    }
+    movement_history = next_history;
 }
 
 function manipulateRuleMap(rule_map) {
@@ -261,7 +355,8 @@ function d4Representative(i, j, size) {
 // initialize the first layer (depth = 0) with a repeating n*n seed matrix
 function initializeGrid() {
     // initialize the first layer (depth = 0) with the first state (empty)
-    initial_layer = Math.floor(Math.random() * n_states);
+    const initial_layer = rule_map.has("move:1,0") ? 0 : Math.floor(Math.random() * n_states);
+    movement_history.clear();
     for (let i = 0; i < Math.floor(cols); i++) {
         for (let j = 0; j < Math.floor(rows); j++) {
             let x = i * cell_size;
@@ -285,18 +380,18 @@ function initializeGrid() {
     }
     console.log("Initial D4 seed matrix:", seed_d4);
 
-        // // // when using majority voting
-        // for (let i = 0; i < cols; i++) {
-        //     for (let j = 0; j < rows; j++) {
-        //         const state = seed_d4[i % pattern_size][j % pattern_size];
-        //         grid[i][j][0] = new Cell(
-        //             i * cell_size,
-        //             j * cell_size,
-        //             0,
-        //             state
-        //         );
-        //     }
-        // }
+    // // // when using majority voting
+    // for (let i = 0; i < cols; i++) {
+    //     for (let j = 0; j < rows; j++) {
+    //         const state = seed_d4[i % pattern_size][j % pattern_size];
+    //         grid[i][j][0] = new Cell(
+    //             i * cell_size,
+    //             j * cell_size,
+    //             0,
+    //             state
+    //         );
+    //     }
+    // }
     
     // // Tile the seed matrix across the full x/y plane at z=0.
     // for (let i = 0; i < cols; i++) {
@@ -342,6 +437,16 @@ function initializeGrid() {
             grid[cols - tiled_size + i][j][0] = new Cell((cols - tiled_size + i) * cell_size, j * cell_size, 0, state); // top-right
             grid[i][rows - tiled_size + j][0] = new Cell(i * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-left
             grid[cols - tiled_size + i][rows - tiled_size + j][0] = new Cell((cols - tiled_size + i) * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-right
+        }
+    }
+    
+    if (rule_map.has("move:1,0")) {
+        for (let x = 0; x < cols; x++) {
+            for (let y = 0; y < rows; y++) {
+                if (grid[x][y][0].state === 1) {
+                    movement_history.set(x * rows + y, perlinDirection(x, y, 0));
+                }
+            }
         }
     }
 }
@@ -587,6 +692,10 @@ function wrapIndex(idx, max) {
 }
 
 function updateState() {
+    if (rule_map.has("move:1,0")) {
+        updateMovementState();
+        return;
+    }
     // create a new z-layer from the previous z-layer
     let z = time_step;
     for (let i = 0; i < cols; i++) {
