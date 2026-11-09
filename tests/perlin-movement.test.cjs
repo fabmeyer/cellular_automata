@@ -6,7 +6,7 @@ const { test } = require('node:test');
 
 const source = fs.readFileSync(path.join(__dirname, '../sketch_1d_3d.js'), 'utf8');
 
-function simulation(probability = 0.5) {
+function simulation(probability = 0.5, stateCount = 2) {
     let phase = 0;
     let noiseValue = () => 0;
     const math = Object.create(Math);
@@ -20,7 +20,8 @@ function simulation(probability = 0.5) {
         .replace('const cols = 96;', 'const cols = 8;')
         .replace('const rows = 96;', 'const rows = 8;')
         .replace('const depth = 192 * 2;', 'const depth = 8;')
-        .replace('const pattern_size = 16;', 'const pattern_size = 2;')
+        .replace(/const pattern_size = \d+;/, 'const pattern_size = 2;')
+        .replace(/const n_states = \d+;/, `const n_states = ${stateCount};`)
         .replace('const forward_probability = 0.5;', `const forward_probability = ${probability};`), context);
     const run = code => vm.runInContext(code, context);
     const read = code => JSON.parse(JSON.stringify(run(code)));
@@ -34,8 +35,8 @@ function simulation(probability = 0.5) {
                 }
             }
         `);
-        for (const [x, y, dx, dy] of cells) {
-            run(`grid[${x}][${y}][0].state = 1;
+        for (const [x, y, dx, dy, state = 1] of cells) {
+            run(`grid[${x}][${y}][0].state = ${state};
                 movement_history.set(${x} * rows + ${y}, [${dx}, ${dy}]);`);
         }
     }
@@ -195,4 +196,88 @@ test('legacy count maps still use the existing count-based update path', () => {
     `);
     assert.equal(sim.run('grid[2][3][1].state'), 1);
     assert.equal(sim.run('grid[3][3][1].state'), 0);
+});
+
+test('default configuration has two occupied colors and validates state count', () => {
+    assert.match(source, /const n_states = 3;/);
+    for (const stateCount of [2, 3, 9]) {
+        const sim = simulation(0.5, stateCount);
+        assert.equal(sim.run('colors.length'), stateCount);
+    }
+    for (const stateCount of [0, 1, -1, 2.5, 10, 'NaN', 'Infinity', '"3"']) {
+        assert.throws(() => simulation(0.5, stateCount), /n_states must be an integer between 2 and 9/);
+    }
+});
+
+test('all occupied states retain color during forward, alternative, stationary, and wrapped movement', () => {
+    for (const state of [1, 2, 8]) {
+        const sim = simulation(0.5, 9);
+        for (const [phase, x, y, expectedX, expectedY, dx, dy] of [
+            [0, 3, 3, 4, 3, 1, 0],
+            [0.51, 3, 3, 2, 2, -1, -1],
+            [0.99, 3, 3, 3, 3, 1, 0],
+            [0, 7, 3, 0, 3, 1, 0]
+        ]) {
+            sim.seed([[x, y, 1, 0, state]]);
+            sim.phase(phase);
+            sim.run('updateState()');
+            assert.deepEqual(sim.occupied(), [[expectedX, expectedY, dx, dy]]);
+            assert.equal(sim.run(`grid[${expectedX}][${expectedY}][1].state`), state);
+        }
+    }
+});
+
+test('mixed-state collisions retain the maximum state and sum every incoming direction', () => {
+    for (const states of [[2, 1, 1], [1, 1, 2], [2, 2, 2]]) {
+        const sim = simulation(1, 3);
+        sim.seed([[2, 3, 1, 0, states[0]], [3, 2, 0, 1, states[1]], [4, 3, -1, 0, states[2]]]);
+        sim.run('updateState()');
+        assert.deepEqual(sim.occupied(), [[3, 3, 0, 1]]);
+        assert.equal(sim.run('grid[3][3][1].state'), 2);
+    }
+});
+
+test('highest state survives cancellation and a stationary lower state still affects direction', () => {
+    const sim = simulation(0.5, 3);
+    sim.seed([[2, 3, 1, 0, 2], [4, 3, -1, 0, 1]]);
+    sim.noise(0.3);
+    sim.run('updateState()');
+    assert.deepEqual(sim.occupied(), [[3, 3, 1, -1]]);
+    assert.equal(sim.run('grid[3][3][1].state'), 2);
+    sim.seed([[2, 3, 1, 0, 2], [3, 3, 0, -1, 1]]);
+    sim.noise(x => x < 0.25 ? 0 : 0.99);
+    sim.run('updateState()');
+    assert.deepEqual(sim.occupied(), [[3, 3, 1, -1]]);
+    assert.equal(sim.run('grid[3][3][1].state'), 2);
+});
+
+test('initialization tracks each occupied state, resets history, and leaves surroundings empty', () => {
+    const sim = simulation(0.5, 3);
+    for (const [phase, state] of [[0.4, 1], [0.8, 2]]) {
+        sim.phase(phase);
+        sim.noise(0.6);
+        sim.run('movement_history.set(27, [-1, -1]); initializeGrid();');
+        assert.equal(sim.run('grid[3][3][0].state'), 0);
+        assert.equal(sim.run('movement_history.has(27)'), false);
+        assert.equal(sim.occupied().length, 16);
+        assert.ok(sim.occupied().every(([x, y, dx, dy]) =>
+            sim.run(`grid[${x}][${y}][0].state`) === state && dx === 1 && dy === 0));
+    }
+});
+
+test('multistate layers maintain valid states, nonincreasing occupancy, and compatible row history', () => {
+    const sim = simulation(0.73, 3);
+    sim.seed([[0, 0, 1, 0, 1], [2, 2, -1, 1, 2], [6, 6, 0, -1, 2]]);
+    sim.noise((x, y, z) => (x + y + z) % 1);
+    let count = sim.occupied().length;
+    for (let z = 1; z < 8; z++) {
+        sim.phase(z / 8);
+        sim.run(`time_step = ${z}; updateState(); memory_cell_instance.addLayer(grid, time_step);`);
+        assert.ok(sim.occupied().length <= count);
+        count = sim.occupied().length;
+        assert.equal(sim.run(`grid.every(column => column.every(layers =>
+            layers[${z}] instanceof Cell && [0, 1, 2].includes(layers[${z}].state)))`), true);
+        assert.deepEqual(sim.read('Array.from(memory_cell_instance.getLatestRow())'),
+            sim.read(`grid[0].map(layers => layers[${z}].state)`));
+    }
 });

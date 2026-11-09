@@ -27,9 +27,13 @@ npx http-server
 ## My notes
 ### 3D Perlin Movement
 
-`index.html` loads `sketch_1d_3d.js`, with binary movement rules (version 4).
-State 0 is empty and never acts; each state-1 cell chooses one destination
-in the next layer. Set `forward_probability` in the simulation parameters
+`index.html` loads `sketch_1d_3d.js`, with multistate movement rules (version 4).
+Set `n_states` to an integer from 2 through 9, including empty state 0.
+The default is 3: empty plus two randomly generated occupied colors.
+State 0 never acts; each nonzero-state cell chooses one destination in the
+next layer and retains its state/color when moving or staying. All occupied
+states use the same movement probabilities.
+Set `forward_probability` in the simulation parameters
 to a finite number from 0 to 1 (default `0.5`).
 
 | Destination | Probability |
@@ -49,11 +53,13 @@ each step, modulo 1. This gives the stated marginal probabilities over offsets
 while keeping moves spatially correlated; cells do not make independent draws,
 and finite runs need not realize the exact percentages.
 
-Arrivals at the same destination merge into a single 1. Incoming direction
-vectors are summed, then each component is reduced to its sign. If they
+Arrivals at the same destination merge into a single occupied cell with the
+highest arriving state (for example, states 1 and 2 merge into state 2).
+Direction vectors from all arrivals are summed equally, regardless of state,
+then each component is reduced to its sign. If they
 cancel completely, the local Perlin field supplies a new direction.
 A staying arrival contributes its retained direction. Empty cells never
-spawn new 1s, so the occupied-cell count can only stay constant or decrease.
+spawn occupied cells, so the occupied-cell count can only stay constant or decrease.
 
 `pattern_size` controls the D4-symmetric seed blocks in the four corners;
 the surrounding cells start empty. Directions and subsequent evolution
@@ -67,7 +73,7 @@ uncomment version 3, and set `n_states` as desired. Keep the movement helper
 declarations in place; the update path is selected by the generated map's keys.
 The voting neighborhood side length is
 `2 * Math.floor(pattern_size / divisor) + 1`, so the current values
-(`pattern_size = 16`, `divisor = 3`) give an 11x11 neighborhood.
+(`pattern_size = 32`, `divisor = 3`) give a 21x21 neighborhood.
 Its radius, vote count, and rule map are derived before initialization;
 do not change the size inside `generateRules()`.
 

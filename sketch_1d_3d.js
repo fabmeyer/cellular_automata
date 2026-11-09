@@ -19,19 +19,19 @@ let grid = new Array(cols).fill().map(() => new Array(rows).fill().map(() => new
 
 // simulation parameters
 const time_interval = 1;
-const n_states = 2; // number of different states
-const forward_probability = 0.5;
+const n_states = 9; // includes empty state 0
+const forward_probability = 0.9;
 const noise_space_scale = 0.1;
 const noise_time_scale = 0.1;
 if (!Number.isFinite(forward_probability) || forward_probability < 0 || forward_probability > 1) {
     throw new Error("forward_probability must be a finite number between 0 and 1");
 }
-const pattern_size = 32;
-const divisor = 3;
+
+const pattern_size = 48;
+const divisor = 5;
 const neighborhood_size = 2 * Math.floor(pattern_size / divisor) + 1; // odd side length
-// assert n_states is less than 10, otherwise the rule map will be too large to handle
-if (n_states >= 10) {
-    throw new Error("n_states should be less than 10");
+if (!Number.isInteger(n_states) || n_states < 2 || n_states >= 10) {
+    throw new Error("n_states must be an integer between 2 and 9");
 }
 if (neighborhood_size < 1 || neighborhood_size % 2 === 0) {
     throw new Error("neighborhood_size should be a positive odd number");
@@ -230,7 +230,8 @@ function updateMovementState() {
     for (let x = 0; x < cols; x++) {
         for (let y = 0; y < rows; y++) {
             grid[x][y][z] = new Cell(x * cell_size, y * cell_size, z, 0);
-            if (grid[x][y][z - 1].state !== 1) {
+            const state = grid[x][y][z - 1].state;
+            if (state === 0) {
                 continue;
             }
             const direction = movement_history.get(x * rows + y);
@@ -243,17 +244,19 @@ function updateMovementState() {
             const targetY = wrapIndex(y + move.dy, rows);
             const key = targetX * rows + targetY;
             const incoming = move.dx === 0 && move.dy === 0 ? direction : [move.dx, move.dy];
-            const sum = arrivals.get(key) || [0, 0];
-            sum[0] += incoming[0];
-            sum[1] += incoming[1];
-            arrivals.set(key, sum);
+            const arrival = arrivals.get(key) || { direction: [0, 0], state: 0 };
+            arrival.direction[0] += incoming[0];
+            arrival.direction[1] += incoming[1];
+            arrival.state = Math.max(arrival.state, state);
+            arrivals.set(key, arrival);
         }
     }
     const next_history = new Map();
-    for (const [key, sum] of arrivals) {
+    for (const [key, arrival] of arrivals) {
         const x = Math.floor(key / rows);
         const y = key % rows;
-        grid[x][y][z].state = 1;
+        grid[x][y][z].state = arrival.state;
+        const sum = arrival.direction;
         const direction = sum[0] === 0 && sum[1] === 0
             ? perlinDirection(x, y, z)
             : [Math.sign(sum[0]), Math.sign(sum[1])];
@@ -443,7 +446,7 @@ function initializeGrid() {
     if (rule_map.has("move:1,0")) {
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
-                if (grid[x][y][0].state === 1) {
+                if (grid[x][y][0].state !== 0) {
                     movement_history.set(x * rows + y, perlinDirection(x, y, 0));
                 }
             }
