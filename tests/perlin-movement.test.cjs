@@ -22,7 +22,7 @@ function simulation(probability = 0.5, stateCount = 2) {
         .replace('const depth = 192 * 2;', 'const depth = 8;')
         .replace(/const pattern_size = \d+;/, 'const pattern_size = 2;')
         .replace(/const n_states = \d+;/, `const n_states = ${stateCount};`)
-        .replace('const forward_probability = 0.5;', `const forward_probability = ${probability};`), context);
+        .replace(/const forward_probability = [^;]+;/, `const forward_probability = ${probability};`), context);
     const run = code => vm.runInContext(code, context);
     const read = code => JSON.parse(JSON.stringify(run(code)));
     function seed(cells) {
@@ -53,7 +53,7 @@ test('all direction maps have the configured probability intervals', () => {
     for (const probability of [0, 0.2, 0.5, 0.73, 1]) {
         const sim = simulation(probability);
         const rules = sim.read('Array.from(rule_map)');
-        assert.equal(rules.length, 8);
+        assert.equal(rules.length, 9);
         for (const [key, outcomes] of rules) {
             assert.equal(outcomes.length, 9);
             assert.equal(new Set(outcomes.map(o => `${o.dx},${o.dy}`)).size, 9);
@@ -124,12 +124,12 @@ test('empty cells have no agency and complete layers remain binary', () => {
     assert.equal(sim.run('grid.every(column => column.every(layers => layers[1] instanceof Cell && layers[1].state === 0))'), true);
 });
 
-test('staying retains direction and diagonal seam movement keeps signed displacement', () => {
+test('staying sets straight-up direction and diagonal seam movement keeps signed displacement', () => {
     const sim = simulation();
     sim.seed([[3, 3, 1, 0]]);
     sim.phase(0.99);
     sim.run('updateState()');
-    assert.deepEqual(sim.occupied(), [[3, 3, 1, 0]]);
+    assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
     sim.seed([[0, 7, -1, 1], [7, 0, 1, -1]]);
     sim.phase(0);
     sim.run('updateState()');
@@ -147,22 +147,22 @@ test('collisions merge occupancy and combine all vectors before taking signs', (
     assert.deepEqual(sim.occupied(), [[3, 3, 0, 1]]);
 });
 
-test('cancelled vectors use local Perlin direction and staying contributes retained direction', () => {
+test('cancelled vectors stay straight up and staying contributes zero displacement', () => {
     const sim = simulation();
     sim.seed([[2, 3, 1, 0], [4, 3, -1, 0]]);
     sim.noise(0.3);
     sim.run('updateState()');
-    assert.deepEqual(sim.occupied(), [[3, 3, 1, -1]]);
+    assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
     sim.seed([[2, 3, 1, 0], [3, 3, 0, -1]]);
     sim.noise(x => x < 0.25 ? 0 : 0.99);
     sim.run('updateState()');
-    assert.deepEqual(sim.occupied(), [[3, 3, 1, -1]]);
+    assert.deepEqual(sim.occupied(), [[3, 3, 1, 0]]);
 });
 
 test('initial corner seed is binary, surroundings empty, and all occupied directions use Perlin', () => {
     const sim = simulation();
     sim.phase(0.75);
-    sim.noise(0.6);
+    sim.noise(0.5);
     sim.run('initializeGrid()');
     assert.equal(sim.run('grid[3][3][0].state'), 0);
     assert.equal(sim.occupied().length, 16);
@@ -198,8 +198,7 @@ test('legacy count maps still use the existing count-based update path', () => {
     assert.equal(sim.run('grid[3][3][1].state'), 0);
 });
 
-test('default configuration has two occupied colors and validates state count', () => {
-    assert.match(source, /const n_states = 3;/);
+test('supported state counts have matching palettes and invalid counts fail explicitly', () => {
     for (const stateCount of [2, 3, 9]) {
         const sim = simulation(0.5, stateCount);
         assert.equal(sim.run('colors.length'), stateCount);
@@ -215,7 +214,7 @@ test('all occupied states retain color during forward, alternative, stationary, 
         for (const [phase, x, y, expectedX, expectedY, dx, dy] of [
             [0, 3, 3, 4, 3, 1, 0],
             [0.51, 3, 3, 2, 2, -1, -1],
-            [0.99, 3, 3, 3, 3, 1, 0],
+            [0.99, 3, 3, 3, 3, 0, 0],
             [0, 7, 3, 0, 3, 1, 0]
         ]) {
             sim.seed([[x, y, 1, 0, state]]);
@@ -237,17 +236,17 @@ test('mixed-state collisions retain the maximum state and sum every incoming dir
     }
 });
 
-test('highest state survives cancellation and a stationary lower state still affects direction', () => {
+test('highest state survives cancellation and a stationary arrival adds zero displacement', () => {
     const sim = simulation(0.5, 3);
     sim.seed([[2, 3, 1, 0, 2], [4, 3, -1, 0, 1]]);
     sim.noise(0.3);
     sim.run('updateState()');
-    assert.deepEqual(sim.occupied(), [[3, 3, 1, -1]]);
+    assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
     assert.equal(sim.run('grid[3][3][1].state'), 2);
     sim.seed([[2, 3, 1, 0, 2], [3, 3, 0, -1, 1]]);
     sim.noise(x => x < 0.25 ? 0 : 0.99);
     sim.run('updateState()');
-    assert.deepEqual(sim.occupied(), [[3, 3, 1, -1]]);
+    assert.deepEqual(sim.occupied(), [[3, 3, 1, 0]]);
     assert.equal(sim.run('grid[3][3][1].state'), 2);
 });
 
@@ -255,7 +254,7 @@ test('initialization tracks each occupied state, resets history, and leaves surr
     const sim = simulation(0.5, 3);
     for (const [phase, state] of [[0.4, 1], [0.8, 2]]) {
         sim.phase(phase);
-        sim.noise(0.6);
+        sim.noise(0.5);
         sim.run('movement_history.set(27, [-1, -1]); initializeGrid();');
         assert.equal(sim.run('grid[3][3][0].state'), 0);
         assert.equal(sim.run('movement_history.has(27)'), false);
@@ -263,6 +262,71 @@ test('initialization tracks each occupied state, resets history, and leaves surr
         assert.ok(sim.occupied().every(([x, y, dx, dy]) =>
             sim.run(`grid[${x}][${y}][0].state`) === state && dx === 1 && dy === 0));
     }
+});
+
+test('straight-up history continues at the configured probability', () => {
+    for (const probability of [0, 0.25, 0.5, 0.75, 1]) {
+        const sim = simulation(probability, 3);
+        sim.noise(0.375);
+        let straight = 0;
+        for (let index = 0; index < 64; index++) {
+            sim.seed([[3, 3, 0, 0, 2]]);
+            sim.phase((index + 0.5) / 64);
+            sim.run('updateState()');
+            const [x, y] = sim.occupied()[0];
+            if (x === 3 && y === 3) {
+                straight++;
+                assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
+                assert.equal(sim.run('grid[3][3][1].state'), 2);
+            }
+        }
+        assert.equal(straight, 64 * probability);
+    }
+});
+
+test('a lateral stay becomes a persistent straight-up line in successive layers', () => {
+    const sim = simulation(0.5, 3);
+    sim.seed([[3, 3, 1, 0, 2]]);
+    sim.phase(0.99);
+    sim.run('updateState()');
+    assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
+    sim.phase(0);
+    sim.run('time_step++; updateState(); time_step++; updateState();');
+    assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
+    assert.equal(sim.run('grid[3][3].slice(0, 4).every(cell => cell.state === 2)'), true);
+});
+
+test('straight-up direction can turn into each of the eight lateral directions', () => {
+    const sim = simulation();
+    const outcomes = sim.read('rule_map.get("move:0,0")');
+    assert.deepEqual(outcomes[0], { dx: 0, dy: 0, probability: 0.5 });
+    for (let index = 1; index < outcomes.length; index++) {
+        const move = outcomes[index];
+        sim.seed([[3, 3, 0, 0]]);
+        sim.phase(0.5 + (index - 0.5) / 16);
+        sim.run('updateState()');
+        assert.deepEqual(sim.occupied(), [[3 + move.dx, 3 + move.dy, move.dx, move.dy]]);
+    }
+});
+
+test('Perlin initialization includes every direction including straight up', () => {
+    const sim = simulation();
+    const directions = sim.read('movement_directions');
+    assert.equal(directions.length, 9);
+    directions.forEach((direction, index) => {
+        sim.noise((index + 0.5) / 9);
+        assert.deepEqual(sim.read('perlinDirection(2, 3, 0)'), direction);
+    });
+    sim.phase(0.75);
+    sim.noise(0.95);
+    sim.run('initializeGrid()');
+    assert.equal(sim.occupied().length, 16);
+    assert.ok(sim.occupied().every(([, , dx, dy]) => dx === 0 && dy === 0));
+    sim.phase(0);
+    sim.noise(0);
+    sim.run('time_step = 1; updateState()');
+    assert.equal(sim.occupied().length, 16);
+    assert.ok(sim.occupied().every(([, , dx, dy]) => dx === 0 && dy === 0));
 });
 
 test('multistate layers maintain valid states, nonincreasing occupancy, and compatible row history', () => {

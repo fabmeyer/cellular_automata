@@ -29,24 +29,33 @@ npx http-server
 
 `index.html` loads `sketch_1d_3d.js`, with multistate movement rules (version 4).
 Set `n_states` to an integer from 2 through 9, including empty state 0.
-The default is 3: empty plus two randomly generated occupied colors.
+The configured count includes empty plus `n_states - 1` randomly generated occupied colors.
 State 0 never acts; each nonzero-state cell chooses one destination in the
 next layer and retains its state/color when moving or staying. All occupied
 states use the same movement probabilities.
 Set `forward_probability` in the simulation parameters
-to a finite number from 0 to 1 (default `0.5`).
+to a finite number from 0 to 1. The examples below use `0.5`;
+the script's configured value controls the actual probabilities.
 
 | Destination | Probability |
 | --- | --- |
-| Continue the previous direction | `forward_probability` (default 50%) |
-| Each of the other seven neighbors | `(1 - forward_probability) / 8` (default 6.25% each) |
-| Stay in place | `(1 - forward_probability) / 8` (default 6.25%) |
+| Continue the previous direction | `forward_probability` (50% when set to 0.5) |
+| Each of the other eight directions | `(1 - forward_probability) / 8` (6.25% each when set to 0.5) |
 
-Moving updates the stored direction; staying retains it. A cell moving from
-left to center therefore has a 50% chance of moving right with the defaults.
+There are nine directions: eight horizontal/vertical/diagonal displacements
+in the x/y plane plus `[0, 0]`. The latter keeps the same x/y position while
+advancing along z/time, forming a straight-up line in the 3D history.
+Both lateral movement and staying update the stored direction to the actual
+x/y displacement. A cell moving from
+left to center therefore has a 50% chance of moving right when the parameter is 0.5.
+If a cell occupies the same position in two consecutive layers, its stored
+direction is `[0, 0]` and it has a 50% chance of continuing straight up at that setting.
+For lateral directions, staying is one of the eight alternatives; for the
+straight-up direction, all eight alternatives move to neighboring x/y cells.
 Directions wrap across grid boundaries without reversing.
 
-The local p5 Perlin field supplies initial directions and movement samples.
+The local p5 Perlin field supplies initial directions (including straight up)
+and movement samples.
 `noise_space_scale` and `noise_time_scale` control its spatial and temporal
 variation. One shared uniform random offset is added to the noise samples
 each step, modulo 1. This gives the stated marginal probabilities over offsets
@@ -57,8 +66,8 @@ Arrivals at the same destination merge into a single occupied cell with the
 highest arriving state (for example, states 1 and 2 merge into state 2).
 Direction vectors from all arrivals are summed equally, regardless of state,
 then each component is reduced to its sign. If they
-cancel completely, the local Perlin field supplies a new direction.
-A staying arrival contributes its retained direction. Empty cells never
+cancel completely, the resulting direction is `[0, 0]` (straight up).
+A staying arrival contributes zero x/y displacement. Empty cells never
 spawn occupied cells, so the occupied-cell count can only stay constant or decrease.
 
 `pattern_size` controls the D4-symmetric seed blocks in the four corners;
@@ -72,8 +81,8 @@ To use them, comment out the version-4 `rule_map` declaration and `generateRules
 uncomment version 3, and set `n_states` as desired. Keep the movement helper
 declarations in place; the update path is selected by the generated map's keys.
 The voting neighborhood side length is
-`2 * Math.floor(pattern_size / divisor) + 1`, so the current values
-(`pattern_size = 32`, `divisor = 3`) give a 21x21 neighborhood.
+`2 * Math.floor(pattern_size / divisor) + 1`; for example,
+`pattern_size = 48` and `divisor = 3` give a 33x33 neighborhood.
 Its radius, vote count, and rule map are derived before initialization;
 do not change the size inside `generateRules()`.
 

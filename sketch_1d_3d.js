@@ -20,7 +20,7 @@ let grid = new Array(cols).fill().map(() => new Array(rows).fill().map(() => new
 // simulation parameters
 const time_interval = 1;
 const n_states = 9; // includes empty state 0
-const forward_probability = 0.9;
+const forward_probability = 0.333;
 const noise_space_scale = 0.1;
 const noise_time_scale = 0.1;
 if (!Number.isFinite(forward_probability) || forward_probability < 0 || forward_probability > 1) {
@@ -178,7 +178,8 @@ function hack_rule_map(n_states, rule_map) {
 const movement_directions = [
     [-1, -1], [0, -1], [1, -1],
     [-1, 0],           [1, 0],
-    [-1, 1],  [0, 1],  [1, 1]
+    [-1, 1],  [0, 1],  [1, 1],
+    [0, 0]
 ];
 
 let movement_history = new Map();
@@ -187,7 +188,7 @@ let rule_map = generateRules();
 function generateRules() {
     const rule_map = new Map();
     for (const [dx, dy] of movement_directions) {
-        const alternatives = [...movement_directions, [0, 0]]
+        const alternatives = movement_directions
             .filter(([x, y]) => x !== dx || y !== dy);
         rule_map.set(`move:${dx},${dy}`, [
             { dx, dy, probability: forward_probability },
@@ -243,7 +244,7 @@ function updateMovementState() {
             const targetX = wrapIndex(x + move.dx, cols);
             const targetY = wrapIndex(y + move.dy, rows);
             const key = targetX * rows + targetY;
-            const incoming = move.dx === 0 && move.dy === 0 ? direction : [move.dx, move.dy];
+            const incoming = [move.dx, move.dy];
             const arrival = arrivals.get(key) || { direction: [0, 0], state: 0 };
             arrival.direction[0] += incoming[0];
             arrival.direction[1] += incoming[1];
@@ -257,9 +258,7 @@ function updateMovementState() {
         const y = key % rows;
         grid[x][y][z].state = arrival.state;
         const sum = arrival.direction;
-        const direction = sum[0] === 0 && sum[1] === 0
-            ? perlinDirection(x, y, z)
-            : [Math.sign(sum[0]), Math.sign(sum[1])];
+        const direction = [Math.sign(sum[0]), Math.sign(sum[1])];
         next_history.set(key, direction);
     }
     movement_history = next_history;
