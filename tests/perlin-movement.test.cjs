@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { createHarness, plain } = require('./helpers.cjs');
+const { createHarness, plain, seededRandom } = require('./helpers.cjs');
 
 function simulation(probability = 0.5, stateCount = 2, memoryEnabled = false) {
     let phase = 0;
@@ -271,6 +271,262 @@ test('binary and multistate layers maintain valid states, nonincreasing occupanc
                 Number.isInteger(layers[z].state) && layers[z].state >= 0 && layers[z].state < stateCount)));
             assert.deepEqual(Array.from(sim.subject.memory.getLatestRow()),
                 plain(sim.subject.grid[0].map(layers => layers[z].state)));
+        }
+    }
+});
+
+function trajectorySimulation(parameters = {}, options = {}) {
+    let phase = 0;
+    const trajectory = {
+        slope: [0.5, 0.5], bend: [0, 0], amplitude: [0, 0],
+        wavelength: [8, 8], phase: [0, 0],
+        parameterNoise: { spaceScale: 0.05, channels: 'separate' },
+        ...parameters
+    };
+    const harness = createHarness({
+        grid: { cols: 32, rows: 8, baseDepth: 32, ...options.grid },
+        simulation: { algorithm: 'PN', states: 3 },
+        initial: { mode: 'random' },
+        memory: { enabled: options.memory ?? false },
+        pn: { mode: 'trajectory', forwardProbability: options.probability ?? 1, trajectory }
+    }, {
+        random: () => phase,
+        noise: options.noise ?? ((x, y, z) => z === 0 ? 5.5 / 9 : 0.5)
+    });
+    const { subject } = harness;
+    subject.initialize();
+    for (const [x, y, state = 1] of options.cells ?? [[4, 3]]) {
+        subject.grid[x][y][0].state = state;
+    }
+    subject.algorithm.initialize(subject.grid);
+    return {
+        ...harness,
+        phase(value) { phase = value; },
+        position() {
+            assert.equal(subject.algorithm.trajectories.size, 1);
+            const key = subject.algorithm.trajectories.keys().next().value;
+            return [Math.floor(key / subject.settings.grid.rows), key % subject.settings.grid.rows];
+        }
+    };
+}
+
+test('trajectory slopes produce exact static, half, full, mirrored, and diagonal paths', () => {
+    for (const [slope, direction, noise] of [
+        [0, [1, 0], 5.5 / 9], [0.5, [1, 0], 5.5 / 9],
+        [0.1, [1, 0], 5.5 / 9], [0.3, [1, 0], 5.5 / 9],
+        [1, [1, 0], 5.5 / 9], [0.5, [-1, 0], 3.5 / 9],
+        [0.5, [1, 1], 8.5 / 9], [0.5, [0, 0], 4.5 / 9]
+    ]) {
+        const sim = trajectorySimulation({ slope: [slope, slope] }, { noise: () => noise });
+        for (let z = 0; z < 16; z++) {
+            if (z > 0) sim.subject.step();
+            assert.deepEqual(sim.position(), direction.map((value, axis) => {
+                const size = axis === 0 ? 32 : 8;
+                return (([4, 3][axis] + value * Math.floor(slope * z)) % size + size) % size;
+            }));
+            const path = sim.subject.algorithm.trajectories.values().next().value;
+            assert.deepEqual(plain(path.direction), direction);
+            assert.equal(sim.subject.grid[sim.position()[0]][sim.position()[1]][z].state, 1);
+        }
+    }
+});
+
+test('bending trajectories slow, pause, reverse, and keep their curve state', () => {
+    const sim = trajectorySimulation({ slope: [0.375, 0.375], bend: [-0.03125, -0.03125] },
+        { grid: { baseDepth: 20 } });
+    const positions = [sim.position()[0]];
+    for (let z = 1; z < 20; z++) {
+        sim.subject.step();
+        positions.push(sim.position()[0]);
+        const displacement = 0.375 * z - 0.03125 * z * z / 2;
+        assert.equal(positions[z], 4 + Math.trunc(displacement));
+        assert.ok(Math.abs(positions[z] - positions[z - 1]) <= 1);
+    }
+    assert.ok(positions.some((x, z) => z > 0 && x > positions[z - 1]));
+    assert.ok(positions.some((x, z) => z > 0 && x < positions[z - 1]));
+    assert.equal(sim.subject.algorithm.trajectories.values().next().value.parameters.bend, -0.03125);
+});
+
+test('sine trajectories oscillate, cross their origin, and never skip adjacent cells', () => {
+    const sim = trajectorySimulation({
+        slope: [0, 0], amplitude: [2, 2], wavelength: [16, 16]
+    });
+    const positions = [4];
+    for (let z = 1; z < 24; z++) {
+        sim.subject.step();
+        positions.push(sim.position()[0]);
+        assert.ok(Math.abs(positions[z] - positions[z - 1]) <= 1);
+    }
+    assert.equal(positions[4], 6);
+    assert.equal(positions[8], 4);
+    assert.equal(positions[12], 2);
+    assert.equal(positions[16], 4);
+    assert.equal(positions[20], 6);
+});
+
+test('all trajectory ranges use stable separate or shared spatial Perlin channels', () => {
+    const ranges = {
+        slope: [0.1, 0.3], bend: [-0.001, 0.001], amplitude: [0, 0.2],
+        wavelength: [16, 32], phase: [-Math.PI, Math.PI]
+    };
+    const names = Object.keys(ranges);
+    for (const channels of ['separate', 'shared']) {
+        const calls = [];
+        const noise = (x, y, z) => {
+            calls.push([x, y, z]);
+            return z === 0 ? 5.5 / 9 : (x + y + z) / 10;
+        };
+        const sim = trajectorySimulation({
+            ...ranges, parameterNoise: { spaceScale: 0.1, channels }
+        }, { noise, cells: [[4, 3], [5, 3], [24, 3]] });
+        const paths = sim.subject.algorithm.trajectories;
+        for (const x of [4, 5, 24]) {
+            const path = paths.get(x * 8 + 3);
+            for (const [index, name] of names.entries()) {
+                const [min, max] = ranges[name];
+                const channel = channels === 'shared' ? 1 : index + 1;
+                const u = (x * 0.1 + 0.3 + channel) / 10;
+                assert.ok(Math.abs(path.parameters[name] - (min + u * (max - min))) < 1e-12);
+            }
+        }
+        assert.ok(Math.abs(paths.get(4 * 8 + 3).parameters.slope -
+            paths.get(5 * 8 + 3).parameters.slope) <
+            Math.abs(paths.get(4 * 8 + 3).parameters.slope -
+                paths.get(24 * 8 + 3).parameters.slope));
+        assert.equal(calls.filter(([, , z]) => z > 0).length, 3 * (channels === 'shared' ? 1 : 5));
+        const before = plain(Array.from(paths.values(), path => path.parameters));
+        calls.length = 0;
+        sim.subject.step();
+        assert.deepEqual(plain(Array.from(sim.subject.algorithm.trajectories.values(), path => path.parameters)),
+            before);
+        assert.ok(calls.every(([x, y, z]) => z === 0 && x < 1 && y < 1),
+            'later layers sample movement noise, not parameter fields');
+        sim.subject.initialize();
+        assert.equal(sim.subject.algorithm.trajectories.size, 0);
+        sim.subject.grid[4][3][0].state = 1;
+        calls.length = 0;
+        sim.subject.algorithm.initialize(sim.subject.grid);
+        assert.deepEqual(plain(sim.subject.algorithm.trajectories.get(4 * 8 + 3).parameters), before[0]);
+        assert.equal(calls.filter(([, , z]) => z > 0).length, channels === 'shared' ? 1 : 5);
+    }
+});
+
+test('trajectory parameter endpoints and invalid Perlin samples are handled explicitly', () => {
+    for (const u of [0, 1]) {
+        const sim = trajectorySimulation({ slope: [0, 0.5] }, {
+            noise: (x, y, z) => z === 0 ? 5.5 / 9 : u
+        });
+        assert.equal(sim.subject.algorithm.trajectories.values().next().value.parameters.slope, 0.5 * u);
+    }
+    for (const value of [NaN, Infinity, -0.1, 1.1, '0.5']) {
+        assert.throws(() => trajectorySimulation({}, {
+            noise: (x, y, z) => z === 0 ? 5.5 / 9 : value
+        }), /Invalid PN trajectory noise sample/);
+        const sim = trajectorySimulation();
+        sim.subject.algorithm.noise = () => value;
+        assert.throws(() => sim.subject.step(), /Invalid PN trajectory noise sample/);
+    }
+    for (const value of [NaN, -0.1, 1, '0.5']) {
+        const sim = trajectorySimulation();
+        sim.phase(value);
+        assert.throws(() => sim.subject.step(), /Invalid PN trajectory movement phase/);
+    }
+});
+
+test('trajectory alternatives deviate locally without erasing half-slope progress', () => {
+    const sim = trajectorySimulation({}, { probability: 0.5, noise: () => 5.5 / 9 });
+    // Shift the shared phase so the preferred stationary move loses to [1, 0].
+    sim.phase((0.5 + 4.5 / 16 - 5.5 / 9 + 1) % 1);
+    sim.subject.step();
+    assert.deepEqual(sim.position(), [5, 3]);
+    assert.equal(sim.subject.algorithm.trajectories.values().next().value.offset[0], 0.5);
+    sim.phase((1 - 5.5 / 9) % 1);
+    sim.subject.step();
+    assert.deepEqual(sim.position(), [6, 3]);
+    assert.deepEqual(plain(sim.subject.algorithm.trajectories.values().next().value.direction), [1, 0]);
+
+    const noForward = trajectorySimulation({}, { probability: 0, noise: () => 5.5 / 9 });
+    noForward.phase((1 - 5.5 / 9) % 1);
+    noForward.subject.step();
+    assert.deepEqual(noForward.position(), [3, 2]);
+});
+
+test('trajectory wrapping preserves direction, sub-cell progress, colors, and row memory', () => {
+    const sim = trajectorySimulation({}, { cells: [[31, 3, 2]], memory: true });
+    for (let z = 1; z < 7; z++) {
+        sim.subject.step();
+        assert.deepEqual(sim.position(), [(31 + Math.floor(z / 2)) % 32, 3]);
+        assert.equal(sim.subject.grid[sim.position()[0]][3][z].state, 2);
+        assert.deepEqual(Array.from(sim.subject.memory.getLatestRow()),
+            plain(sim.subject.grid[0].map(layers => layers[z].state)));
+    }
+    sim.subject.algorithm.trajectories.clear();
+    assert.throws(() => sim.subject.step(), /Missing trajectory history/);
+});
+
+test('trajectory collisions average parameters and fractional directions, retain highest color, and rebase', () => {
+    const sim = trajectorySimulation({ slope: [1, 1] },
+        { cells: [[3, 3, 1], [4, 2, 2]] });
+    const algorithm = sim.subject.algorithm;
+    algorithm.trajectories.get(4 * 8 + 2).direction = [0, 1];
+    sim.subject.step();
+    assert.deepEqual(sim.position(), [4, 3]);
+    assert.equal(sim.subject.grid[4][3][1].state, 2);
+    assert.deepEqual(plain(algorithm.trajectories.values().next().value.direction), [0.5, 0.5]);
+    assert.deepEqual(plain(algorithm.trajectories.values().next().value.offset), [0, 0]);
+    sim.subject.step();
+    assert.deepEqual(sim.position(), [4, 3]);
+    sim.subject.step();
+    assert.deepEqual(sim.position(), [5, 4]);
+
+    const paths = [
+        { direction: [1, 0], offset: [5.25, 0], parameters: {
+            slope: 0.2, bend: -0.001, amplitude: 0.1, wavelength: 16, phase: Math.PI - 0.1
+        } },
+        { direction: [-1, 0], offset: [-3.5, 0], parameters: {
+            slope: 0.6, bend: 0.001, amplitude: 0.3, wavelength: 32, phase: -Math.PI + 0.1
+        } }
+    ];
+    const merged = algorithm.mergeTrajectories(paths, 8);
+    assert.deepEqual(plain(merged.direction), [0, 0]);
+    assert.deepEqual(plain(merged.offset), [-0.125, 0]);
+    assert.equal(merged.parameters.slope, 0.4);
+    assert.equal(merged.parameters.bend, 0);
+    assert.equal(merged.parameters.amplitude, 0.2);
+    assert.equal(merged.parameters.wavelength, 24);
+    assert.ok(Math.abs(Math.abs(merged.parameters.phase) - Math.PI) < 1e-12);
+    assert.deepEqual(plain(algorithm.mergeTrajectories([...paths].reverse(), 8)), plain(merged));
+    paths[0].parameters.phase = 0;
+    paths[1].parameters.phase = Math.PI;
+    assert.equal(algorithm.mergeTrajectories(paths, 8).parameters.phase, 0);
+});
+
+test('spatially varied trajectories preserve valid layers and nonincreasing occupancy through collisions', () => {
+    for (const states of [2, 3, 9]) {
+        for (const probability of [0, 0.5, 1]) {
+            const { subject } = createHarness({
+                grid: { baseDepth: 12 }, simulation: { algorithm: 'PN', states },
+                initial: { mode: 'random' }, view: { orientation: 'vertical' },
+                pn: { mode: 'trajectory', forwardProbability: probability, trajectory: {
+                    slope: [0, 0.5], bend: [-0.001, 0.001], amplitude: [0, 0.25],
+                    wavelength: [16, 32], phase: [-Math.PI, Math.PI],
+                    parameterNoise: { spaceScale: 0.2, channels: 'separate' }
+                } }
+            }, { random: seededRandom(), noise: (x, y, z) => (Math.sin(x * 5 + y * 3 + z * 2) + 1) / 2 });
+            subject.initialize();
+            let count = subject.algorithm.trajectories.size;
+            for (let z = 1; z < subject.settings.depth; z++) {
+                subject.step();
+                const occupied = subject.grid.flatMap(column => column.map(layers => layers[z].state))
+                    .filter(state => state !== 0);
+                assert.equal(occupied.length, subject.algorithm.trajectories.size);
+                assert.ok(occupied.length <= count);
+                assert.ok(occupied.every(state => Number.isInteger(state) && state > 0 && state < states));
+                assert.deepEqual(Array.from(subject.memory.getLatestRow()),
+                    plain(subject.grid[0].map(layers => layers[z].state)));
+                count = occupied.length;
+            }
+            assert.equal(subject.step(), null);
         }
     }
 });

@@ -26,8 +26,16 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `ca.neighborhoodSize` | Positive odd side length; independent of seed size | `9` |
 | `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.67` |
 | `ca.cycleUniform` | Boolean enabling uniform-neighborhood cycling for all CA rules | `true` |
-| `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement | `0.25` |
-| `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Positive Perlin spatial/time scales | `0.05`, `0.05` |
+| `pn.mode` | `"legacy"` integer-direction movement or `"trajectory"` slopes/curves | `"legacy"` |
+| `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement (legacy) or following the planned movement (trajectory) | `0.1` |
+| `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Positive Perlin spatial/time scales | `0.01`, `0.01` |
+| `pn.trajectory.slope` | Nonnegative `[min, max]` slope, in cells per layer along the initial direction | `[0, 0.5]` |
+| `pn.trajectory.bend` | Signed `[min, max]` change in slope per layer | `[0, 0]` |
+| `pn.trajectory.amplitude` | Nonnegative `[min, max]` sine displacement, in cells | `[0, 0]` |
+| `pn.trajectory.wavelength` | Positive `[min, max]` sine cycle length, in layers | `[32, 32]` |
+| `pn.trajectory.phase` | `[min, max]` sine phase, in radians | `[0, 2 * Math.PI]` |
+| `pn.trajectory.parameterNoise.spaceScale` | Positive spatial scale for initial parameter fields, independent of movement noise | `0.05` |
+| `pn.trajectory.parameterNoise.channels` | `"separate"` parameter fields or one `"shared"` sample for all ranges | `"separate"` |
 | `initial.mode` | `"random"` plane or reusable `"seed"` | `"seed"` |
 | `initial.patternSize` | Positive integer seed side length, fitting both plane dimensions | `16` |
 | `initial.symmetry` | `"plain"` or `"D4"` | `"plain"` |
@@ -84,9 +92,10 @@ merely its sum.
 
 ### Perlin movement
 
-PN preserves the existing movement algorithm; it does not turn noise directly
-into cell states. Empty cells never act. Every occupied cell moves to one
-destination in the next generation and keeps its state/color.
+PN does not turn noise directly into cell states. Empty cells never act. Every
+occupied cell moves to one destination in the next generation and keeps its
+state/color. The default `pn.mode: "legacy"` preserves the existing movement
+algorithm described below.
 
 There are nine displacements: eight adjacent x/y directions plus `[0, 0]`
 (a straight line through time). Continue the previous displacement with
@@ -103,6 +112,93 @@ Colliding arrivals merge into the **highest arriving state**. All incoming
 displacement vectors are summed equally, then each component is reduced to its
 sign. Complete cancellation produces `[0, 0]`. Occupied-cell counts can only
 stay constant or decrease.
+
+#### Trajectory slopes and curves
+
+Set `pn.mode = "trajectory"` to enable fractional slopes and curved paths.
+All five trajectory parameters support `[min, max]` ranges. At initialization,
+each occupied cell samples spatial Perlin noise and maps it into each range:
+`min + noiseValue * (max - min)`. Equal endpoints give an exact parameter.
+
+Nearby starting cells receive similar parameters. Smaller
+`pn.trajectory.parameterNoise.spaceScale` makes larger regions of similar
+paths; it is independent of the movement noise scales. Distant cells can differ,
+but are not guaranteed to. Perlin values are not uniformly distributed across
+the range and need not reach its endpoints.
+
+With `channels: "separate"`, slope, bend, amplitude, wavelength, and phase use
+fixed noise z offsets 1 through 5 respectively. Their fields can differ, but
+are not statistically independent. With `"shared"`, all parameters use the same
+sample (z offset 1), rising/falling together within their respective ranges.
+Samples use initial x/y coordinates only, not color/state or position within a
+seed tile. Parameters travel with the path and are not resampled in later
+layers or after wrapping. Reload/reinitialization samples a fresh initial grid.
+Only collision averaging subsequently changes a path's parameters.
+
+The scalar displacement along the initial Perlin direction is:
+
+```text
+F(t) = slope*t + bend*t*t/2
+       + amplitude*(sin(2*PI*t/wavelength + phase) - sin(phase))
+```
+
+`t` is the layer index and `F(0) = 0`. A negative bend slows and eventually
+reverses movement; the sine term oscillates. The retained initial direction
+includes `[0, 0]`, which remains stationary when following the exact trajectory.
+These are parameterized curves, not arbitrary user-defined functions.
+
+Continuous x/y displacement accumulates across layers, with integer positions
+quantized toward zero relative to the path's starting point. Fractional progress
+and orientation survive pauses. For an exact half-slope, set:
+
+```js
+// Within CONFIG.pn:
+mode: "trajectory",
+forwardProbability: 1,
+trajectory: {
+    slope: [0.5, 0.5],
+    bend: [0, 0],
+    amplitude: [0, 0],
+    wavelength: [32, 32],
+    phase: [0, 0],
+    parameterNoise: { spaceScale: 0.05, channels: "separate" }
+}
+```
+
+A positive x direction then has relative positions `0,0,1,1,2,2,...`;
+negative directions mirror this. For an oscillating path, use `slope: [0, 0]`,
+`amplitude: [2, 2]`, and `wavelength: [16, 16]`. To add gradual bending,
+choose a small signed bend range appropriate for the simulation depth.
+
+With `forwardProbability: 1`, paths follow the quantized trajectory exactly.
+Lower values retain the same nine-outcome probability distribution, preferring
+the trajectory's planned movement rather than the previous integer move.
+An alternative replaces that layer's planned movement with one adjacent-cell
+movement; it offsets the path locally without restarting its curve or phase.
+Existing `forwardProbability` and movement noise scales remain global.
+
+Every layer moves at most one cell per axis, with existing boundary wrapping.
+Configuration validation enforces the conservative continuous-speed bound:
+
+```text
+maxSlope + maxAbsBend*(effectiveDepth - 1)
+         + 2*PI*maxAmplitude/minWavelength <= 1
+```
+
+Excessive settings throw an error before grid allocation; they are not clipped.
+This bound can reject curves whose terms cancel enough to be safe. Vertical
+view's greater effective depth can require a smaller bend. Ranges must be
+ordered, finite float32 values; wavelength must also allow finite curve
+evaluation. Invalid trajectory-mode noise samples fail explicitly.
+
+Collisions retain the highest state/color, averaging incoming retained direction
+vectors (without reducing them to signs), parameters, and fractional remainders
+equally, regardless of color. Phase uses a circular mean; cancellation chooses
+phase zero. Averaged phase is represented modulo a full turn, rather than
+necessarily within the original phase range. The merged curve is rebased at the
+collision cell with its fractional progress, continuing at the current layer
+index without teleporting. Opposing directions can cancel into a stationary
+path. This creates one new curve, not independently surviving incoming paths.
 
 ### Initial grids and compatibility
 
@@ -131,7 +227,8 @@ change when seed size changes.
 
 Inactive options are ignored: CA options under PN, PN options under CA, seed
 options under random-plane initialization, memory tuning when disabled, and
-empty-state probability under majority voting. Switching algorithms never
+empty-state probability under majority voting. Trajectory settings are ignored
+in legacy PN mode. Switching algorithms never
 depends on recognizing special keys in a rule map.
 
 ### Views and memory
@@ -190,7 +287,8 @@ node --test tests/*.test.cjs
 ```
 
 Tests load the same scripts in the same order as the page. They cover PN
-probabilities, persistence, wrapping, collisions, multistate colors, CA rules,
+probabilities, persistence, trajectory slopes/curves, spatial parameter fields,
+wrapping, collisions, multistate colors, CA rules,
 initializers, validation, camera fit, and memory rollover. A small-grid matrix
 checks all 924 combinations of algorithms/rules/uniform-cycling, initializers,
 orientations, memory switches, and representative state counts (2, 3, 9).

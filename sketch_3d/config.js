@@ -19,13 +19,25 @@ const CONFIG = {
         cycleUniform: true
     },
     pn: {
+        mode: "trajectory", // "legacy", "trajectory"
         forwardProbability: 0.99,
-        noiseSpaceScale: 0.0001,
-        noiseTimeScale: 0.0001
+        noiseSpaceScale: 0.001,
+        noiseTimeScale: 0.001,
+        trajectory: {
+            slope: [0, 0.05], // max 1
+            bend: [0, 0], // max 1
+            amplitude: [8, 16], //
+            wavelength: [128, 192],
+            phase: [0, 2 * Math.PI], // radians
+            parameterNoise: {
+                spaceScale: 0.2,
+                channels: "separate" // "separate", "shared"
+            }
+        }
     },
     initial: {
         mode: "seed", // "random" plane or reusable "seed"
-        patternSize: 32,
+        patternSize: 16,
         symmetry: "D4", // "plain", "D4"
         placement: "tiled", // "tiled", "center", "corners"
         loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
@@ -56,6 +68,7 @@ const CONFIG = {
 
 const INT32_MAX = 2147483647;
 const FLOAT32_MAX = 3.4028234663852886e38;
+const TRAJECTORY_PARAMETERS = ["slope", "bend", "amplitude", "wavelength", "phase"];
 
 function resolveConfig(config) {
     function requireValue(condition, message) {
@@ -117,6 +130,7 @@ function resolveConfig(config) {
             probability(ca.emptyStateProbability, "ca.emptyStateProbability");
         }
     } else {
+        choice(config.pn.mode, ["legacy", "trajectory"], "pn.mode");
         probability(config.pn.forwardProbability, "pn.forwardProbability");
         positiveNumber(config.pn.noiseSpaceScale, "pn.noiseSpaceScale");
         positiveNumber(config.pn.noiseTimeScale, "pn.noiseTimeScale");
@@ -146,6 +160,33 @@ function resolveConfig(config) {
         "view.background must be between 0 and 255");
     const depth = grid.baseDepth * preset.depthMultiplier;
     positiveInteger(depth, "effective depth");
+    if (simulation.algorithm === "PN" && config.pn.mode === "trajectory") {
+        const trajectory = config.pn.trajectory;
+        requireValue(trajectory && typeof trajectory === "object",
+            "pn.trajectory must contain parameter ranges");
+        for (const name of TRAJECTORY_PARAMETERS) {
+            const range = trajectory[name];
+            requireValue(Array.isArray(range) && range.length === 2 && range.every(float32) &&
+                range[0] <= range[1],
+                `pn.trajectory.${name} must be an ordered pair of finite float32 numbers`);
+        }
+        requireValue(trajectory.slope[0] >= 0, "pn.trajectory.slope must be nonnegative");
+        requireValue(trajectory.amplitude[0] >= 0, "pn.trajectory.amplitude must be nonnegative");
+        requireValue(trajectory.wavelength[0] > 0, "pn.trajectory.wavelength must be positive");
+        requireValue(Number.isFinite(2 * Math.PI * Math.max(1, depth - 1) / trajectory.wavelength[0]),
+            "pn.trajectory.wavelength is too small for finite curve evaluation");
+        const parameterNoise = trajectory.parameterNoise;
+        requireValue(parameterNoise && typeof parameterNoise === "object",
+            "pn.trajectory.parameterNoise must contain spaceScale and channels");
+        positiveNumber(parameterNoise.spaceScale, "pn.trajectory.parameterNoise.spaceScale");
+        choice(parameterNoise.channels, ["separate", "shared"], "pn.trajectory.parameterNoise.channels");
+        const maxBend = Math.max(...trajectory.bend.map(Math.abs));
+        const speedBound = trajectory.slope[1] + maxBend * (depth - 1) +
+            2 * Math.PI * (trajectory.amplitude[1] / trajectory.wavelength[0]);
+        requireValue(speedBound <= 1,
+            "pn.trajectory ranges must limit movement to one cell per axis per layer: " +
+            "maxSlope + maxAbsBend * (depth - 1) + 2 * PI * maxAmplitude / minWavelength <= 1");
+    }
     if (memory.enabled) {
         memoryCapacity = Math.max(memoryCapacity, Math.floor(depth / 4));
     }

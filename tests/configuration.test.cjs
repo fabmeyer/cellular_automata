@@ -744,3 +744,43 @@ test('a one-layer simulation completes without generating an out-of-bounds layer
     assert.equal(subject.step(), null);
     assert.ok(subject.grid.every(column => column.every(layers => layers.length === 1)));
 });
+
+test('trajectory configuration validates ranges, noise controls, and effective-depth speed before allocation', () => {
+    const { defaults } = createHarness();
+    const trajectory = defaults.pn.trajectory;
+    for (const [values, message] of [
+        [{ slope: [0.5, 0] }, /slope/],
+        [{ slope: [-0.1, 0.5] }, /slope/],
+        [{ bend: [0] }, /bend/],
+        [{ bend: [0, Infinity] }, /bend/],
+        [{ amplitude: [-1, 0] }, /amplitude/],
+        [{ wavelength: [0, 1] }, /wavelength/],
+        [{ wavelength: [Number.MIN_VALUE, Number.MIN_VALUE] }, /wavelength/],
+        [{ phase: [NaN, 0] }, /phase/],
+        [{ phase: ['0', 1] }, /phase/],
+        [{ parameterNoise: null }, /parameterNoise/],
+        [{ parameterNoise: { spaceScale: 0, channels: 'separate' } }, /spaceScale/],
+        [{ parameterNoise: { spaceScale: 0.05, channels: 'bad' } }, /channels/],
+        [{ slope: [0, 2] }, /one cell per axis/],
+        [{ slope: [0, 0.5], amplitude: [1, 1], wavelength: [8, 8] }, /one cell per axis/]
+    ]) {
+        assert.throws(() => createHarness({
+            pn: { mode: 'trajectory', trajectory: { ...trajectory, ...values } }
+        }), message);
+    }
+    assert.throws(() => createHarness({ pn: { mode: 'bad' } }), /pn.mode/);
+    assert.throws(() => createHarness({ pn: { mode: 'trajectory', trajectory: null } }), /pn.trajectory/);
+    assert.doesNotThrow(() => createHarness({ pn: { mode: 'legacy', trajectory: null } }));
+    assert.doesNotThrow(() => createHarness({
+        simulation: { algorithm: 'CA' }, pn: { mode: 'bad', trajectory: null }
+    }));
+    const curved = { ...trajectory, slope: [0, 0.5], bend: [0, 0.05] };
+    assert.doesNotThrow(() => createHarness({
+        grid: { baseDepth: 8 }, view: { orientation: 'sideways' },
+        pn: { mode: 'trajectory', trajectory: curved }
+    }));
+    assert.throws(() => createHarness({
+        grid: { baseDepth: 8 }, view: { orientation: 'vertical' },
+        pn: { mode: 'trajectory', trajectory: curved }
+    }), /one cell per axis/);
+});
