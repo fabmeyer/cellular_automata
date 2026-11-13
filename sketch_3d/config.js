@@ -1,7 +1,7 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        factor: 1,
+        factor: 2,
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
@@ -9,7 +9,7 @@ const CONFIG = {
     },
     simulation: {
         algorithm: "PN", // "CA", "PN"
-        get states() { return Math.min(8, CONFIG.initial.patternSize); },
+        get states() { return Math.min(9, CONFIG.initial.patternSize); },
         timeInterval: 1
     },
     ca: {
@@ -20,25 +20,25 @@ const CONFIG = {
     },
     pn: {
         mode: "trajectory", // "legacy", "trajectory"
-        maxCellsPerAxisPerLayer: 100,
+        maxCellsPerAxisPerLayer: 5,
         forwardProbability: 1.0,
-        noiseSpaceScale: 0.025,
+        noiseSpaceScale: 0.00125,
         noiseTimeScale: 0.0,
         trajectory: {
-            slope: [0.001, 0.01], // cells per layer
-            bend: [0.001, 0.01], // change in slope per layer
+            slope: [0.001, 0.001], // cells per layer
+            bend: [-0.001, 0.001], // change in slope per layer
             amplitude: [4, 16],
-            wavelength: [64, 256],
+            wavelength: [128, 512],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.025,
+                spaceScale: 0.00125,
                 channels: "shared" // "separate", "shared"
             }
         }
     },
     initial: {
         mode: "seed", // "random" plane or reusable "seed"
-        patternSize: 16,
+        patternSize: 32,
         symmetry: "D4", // "plain", "D4"
         placement: "tiled", // "tiled", "center", "corners"
         loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop

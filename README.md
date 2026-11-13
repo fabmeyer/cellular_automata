@@ -93,6 +93,9 @@ merely its sum.
 
 ### Perlin movement
 
+See [the full Perlin noise guide](./docs/PERLIN_NOISE.MD) for parameter ranges,
+units, visual effects, presets, and diagnostic findings.
+
 PN does not turn noise directly into cell states. Empty cells never act. Every
 occupied cell moves to one destination in the next generation and keeps its
 state/color. The default `pn.mode: "legacy"` preserves the existing movement
