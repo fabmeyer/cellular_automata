@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
+const vm = require('node:vm');
 const { createHarness, seededRandom, drawingStub, plain } = require('./helpers.cjs');
 
 const initializers = [
@@ -625,6 +626,142 @@ test('memory does not mutate PN rules and can be disabled', () => {
     assert.equal(disabled.subject.memory, null);
 });
 
+test('generation count independently controls retained layers and termination', () => {
+    for (const orientation of ['sideways', 'vertical']) {
+        for (const generations of [1, 2, 5]) {
+            for (const [algorithm, mode, boundary] of [
+                ['CA', 'legacy', 'wrap'], ['PN', 'legacy', 'wrap'],
+                ['PN', 'legacy', 'grow'], ['PN', 'trajectory', 'wrap'], ['PN', 'trajectory', 'grow']
+            ]) {
+                const { subject } = createHarness({
+                    grid: { cols: 2, rows: 2, baseDepth: 2 },
+                    simulation: { algorithm, states: 2, numGenerations: generations },
+                    initial: { mode: 'random' }, view: { orientation },
+                    pn: { mode, boundary, forwardProbability: 1 },
+                    memory: { enabled: true }
+                }, { random: () => 0.75, noise: () => 0.5 });
+                const depth = orientation === 'vertical' ? 4 : 2;
+                assert.equal(subject.settings.depth, depth);
+                assert.equal(subject.settings.simulation.numGenerations, generations);
+                subject.initialize();
+                for (let z = 1; z < generations; z++) {
+                    assert.equal(subject.step(), z);
+                }
+                assert.equal(subject.step(), null);
+                assert.equal(subject.step(), null);
+                assert.ok(subject.grid.every(column => column.every(layers =>
+                    layers.length === generations && layers.every((cell, z) => cell?.z === z))));
+                assert.equal(subject.memory.quarterDepth, Math.floor(depth / 4));
+            }
+        }
+    }
+});
+
+test('configured generation count uses grid depth and view preset, and rejects invalid values', () => {
+    const { context } = createHarness();
+    for (const orientation of ['sideways', 'vertical']) {
+        vm.runInContext(`CONFIG.view.orientation = '${orientation}'`, context);
+        assert.equal(vm.runInContext('CONFIG.simulation.numGenerations', context),
+            vm.runInContext('1.5 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier', context));
+    }
+    for (const generations of [0, -1, 1.5, NaN, Infinity, '2', null, undefined, 2147483648]) {
+        assert.throws(() => createHarness({ simulation: { numGenerations: generations } }), /simulation\.numGenerations/);
+    }
+    const { classes, config } = createHarness();
+    Object.assign(config.grid, { cols: 1, rows: 1, baseDepth: 1, cellSize: 1e38 });
+    config.initial.mode = 'random';
+    config.view.presets.sideways.canvasScale = [1e-38, 1e-38];
+    config.simulation.numGenerations = 10;
+    assert.throws(() => classes.resolveConfig(config), /finite float32 layer positions/);
+});
+
+test('changing generation count preserves shared layers and depth-based memory', () => {
+    for (const [algorithm, mode, boundary] of [
+        ['CA', 'legacy', 'wrap'], ['PN', 'legacy', 'wrap'],
+        ['PN', 'legacy', 'grow'], ['PN', 'trajectory', 'wrap'], ['PN', 'trajectory', 'grow']
+    ]) {
+        const run = generations => {
+            const { subject } = createHarness({
+                grid: { cols: 2, rows: 2, baseDepth: 20 },
+                simulation: { algorithm, states: 2, numGenerations: generations },
+                initial: { mode: 'random' }, memory: { enabled: true },
+                pn: { mode, boundary, forwardProbability: 1 }
+            }, { random: seededRandom(), noise: () => 0.5 });
+            subject.initialize();
+            for (let z = 1; z < 3; z++) subject.step();
+            return {
+                layers: plain(subject.grid.map(column => column.map(cells =>
+                    cells.slice(0, 3).map(cell => cell.state)))),
+                capacity: subject.memory.capacity,
+                quarterDepth: subject.memory.quarterDepth
+            };
+        };
+        const short = run(3);
+        assert.deepEqual(run(30), short);
+        assert.equal(short.capacity, 5);
+        assert.equal(short.quarterDepth, 5);
+    }
+});
+
+test('layers beyond depth retain their positions and do not reframe the camera', () => {
+    const trajectory = { ...createHarness().config.pn.trajectory, slope: [1, 1] };
+    for (const mode of ['legacy', 'trajectory']) {
+        const make = generations => {
+            const harness = createHarness({
+                grid: { cols: 1, rows: 1, baseDepth: 2 },
+                simulation: { algorithm: 'PN', states: 2, numGenerations: generations },
+                initial: { mode: 'random' }, memory: { enabled: false },
+                pn: { mode, boundary: 'grow', forwardProbability: 1,
+                    trajectory }
+            }, { random: () => 0.75, noise: () => 5.5 / 9 });
+            const { drawing, calls } = drawingStub();
+            const renderer = new harness.classes.GridRenderer(harness.subject.settings, drawing);
+            renderer.setup();
+            return { ...harness, renderer, calls };
+        };
+        const baseline = make(2);
+        const extended = make(5);
+        assert.deepEqual(extended.calls.filter(([name]) => name === 'camera' || name === 'ortho'),
+            baseline.calls.filter(([name]) => name === 'camera' || name === 'ortho'));
+        extended.subject.initialize();
+        for (let z = 1; z < 5; z++) {
+            assert.equal(extended.subject.step(), z);
+        }
+        assert.deepEqual(plain(extended.subject.grid.outsideLayers[4].get('4,0')),
+            { x: 4, y: 0, state: 1 });
+        extended.renderer.drawLayer(extended.subject.grid, 4);
+        assert.deepEqual(extended.calls.filter(([name]) => name === 'translate').at(-1),
+            ['translate', 16, 0, 14]);
+    }
+});
+
+test('frame scheduling stops at the configured generation count', () => {
+    for (const generations of [1, 5]) {
+        const { context, config } = createHarness({
+            grid: { cols: 2, rows: 2, baseDepth: 2 },
+            simulation: { algorithm: 'CA', states: 2, numGenerations: generations, timeInterval: 3 },
+            ca: { rule: 'majority', neighborhoodSize: 1 },
+            initial: { mode: 'random' }, memory: { enabled: false }
+        });
+        const { drawing, calls } = drawingStub();
+        const pending = [];
+        Object.assign(context, drawing, {
+            testConfig: config,
+            setTimeout(callback, delay) { pending.push({ callback, delay }); }
+        });
+        vm.runInContext('Object.assign(CONFIG, testConfig); setup();', context);
+        for (let z = 1; z < generations; z++) {
+            assert.equal(pending.length, 1);
+            const { callback, delay } = pending.shift();
+            assert.equal(delay, 3);
+            callback();
+        }
+        assert.equal(pending.length, 0);
+        assert.equal(calls.filter(([name]) => name === 'box').length, 4 * generations);
+        assert.equal(vm.runInContext('simulation.nextZ', context), generations);
+    }
+});
+
 test('both view presets frame the entire rotated volume tightly at different aspect ratios', () => {
     for (const orientation of ['sideways', 'vertical']) {
         for (const dimensions of [[96, 96, 192], [2, 17, 1], [21, 2, 39]]) {
@@ -839,6 +976,25 @@ test('trajectory configuration validates ranges, noise controls, and effective-d
     }));
 });
 
+test('trajectory speed validation uses generations rather than view depth', () => {
+    const { config } = createHarness();
+    const trajectory = { ...config.pn.trajectory, slope: [0, 0], bend: [0, 0.1] };
+    const options = {
+        grid: { baseDepth: 2 },
+        pn: { mode: 'trajectory', trajectory, maxCellsPerAxisPerLayer: 1 }
+    };
+    assert.doesNotThrow(() => createHarness({ ...options, simulation: { numGenerations: 2 } }));
+    assert.throws(() => createHarness({ ...options, simulation: { numGenerations: 20 } }),
+        /speed bound.*maxCellsPerAxisPerLayer/);
+    const tinyWavelength = {
+        ...options,
+        pn: { ...options.pn, trajectory: { ...trajectory, bend: [0, 0], wavelength: [1e-305, 1e-305] } }
+    };
+    assert.doesNotThrow(() => createHarness({ ...tinyWavelength, simulation: { numGenerations: 2 } }));
+    assert.throws(() => createHarness({ ...tinyWavelength, simulation: { numGenerations: 1000 } }),
+        /wavelength.*finite curve evaluation/);
+});
+
 test('all three PN scales accept zero and retain finite nonnegative float32 limits', () => {
     const { classes, config } = createHarness();
     const float32Max = 3.4028234663852886e38;
@@ -896,6 +1052,7 @@ test('PN movement limit accepts positive int32 values and controls the trajector
 test('trajectory validation logs the unrounded bound and required cap before accepting or rejecting it', () => {
     const { classes, config, logs } = createHarness();
     config.grid.baseDepth = 192;
+    config.simulation.numGenerations = 192;
     config.pn.mode = 'trajectory';
     config.pn.maxCellsPerAxisPerLayer = 21;
     Object.assign(config.pn.trajectory, {
@@ -905,21 +1062,21 @@ test('trajectory validation logs the unrounded bound and required cap before acc
     const message = 'PN trajectory movement bound (cells per axis per layer):';
     classes.resolveConfig(config);
     assert.deepEqual(plain(logs), [[message, {
-        speedBound, minimumIntegerLimit: 21, configuredLimit: 21, depth: 192
+        speedBound, minimumIntegerLimit: 21, configuredLimit: 21, numGenerations: 192
     }]]);
 
     logs.length = 0;
     config.pn.maxCellsPerAxisPerLayer = 1;
     assert.throws(() => classes.resolveConfig(config), /speed bound/);
     assert.deepEqual(plain(logs), [[message, {
-        speedBound, minimumIntegerLimit: 21, configuredLimit: 1, depth: 192
+        speedBound, minimumIntegerLimit: 21, configuredLimit: 1, numGenerations: 192
     }]]);
 
     logs.length = 0;
     Object.assign(config.pn.trajectory, { slope: [0, 0], bend: [0, 0], amplitude: [0, 0] });
     classes.resolveConfig(config);
     assert.deepEqual(plain(logs), [[message, {
-        speedBound: 0, minimumIntegerLimit: 1, configuredLimit: 1, depth: 192
+        speedBound: 0, minimumIntegerLimit: 1, configuredLimit: 1, numGenerations: 192
     }]]);
 
     logs.length = 0;

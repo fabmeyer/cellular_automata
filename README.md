@@ -17,10 +17,11 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | Setting | Meaning / options | Default |
 | --- | --- | --- |
 | `grid.cols`, `grid.rows` | Positive integer plane dimensions | `96`, `96` |
-| `grid.baseDepth` | Sideways generation count, including the initial plane | `192` |
+| `grid.baseDepth` | Sideways camera framing depth in layers | `192 * grid.factor` |
 | `grid.cellSize` | Positive cube size | `4` |
 | `simulation.algorithm` | `"CA"` or `"PN"` | `"PN"` |
 | `simulation.states` | Integer 2 through 9, including empty state **0** | `9` |
+| `simulation.numGenerations` | Positive integer total layer count, including the initial plane | 1.5 times effective view depth |
 | `simulation.timeInterval` | Nonnegative delay between generations, in ms | `1` |
 | `ca.rule` | `"counts"`, `"sum"`, `"majority"` | `"majority"` |
 | `ca.neighborhoodSize` | Positive odd side length; independent of seed size | `9` |
@@ -115,7 +116,7 @@ without reversing.
 
 Set `pn.boundary: "grow"` to let both PN modes continue beyond the original
 x/y plane instead. Paths can collide outside or return inside; z still stops
-at the configured depth. The camera remains fitted to the original block, so
+at the configured generation count. The camera remains fitted to the original block, so
 outward cells may be clipped. Only occupied cells are stored and drawn outside
 the original plane; row memory still observes the original x=0 stripe. Very
 large exterior coordinates beyond JavaScript's safe integer range raise an error.
@@ -211,7 +212,7 @@ trajectory: {
 A positive x direction then has relative positions `0,0,1,1,2,2,...`;
 negative directions mirror this. For an oscillating path, use `slope: [0, 0]`,
 `amplitude: [2, 2]`, and `wavelength: [16, 16]`. To add gradual bending,
-choose a small signed bend range appropriate for the simulation depth.
+choose a small signed bend range appropriate for the total generation count.
 
 With `forwardProbability: 1`, paths follow the quantized trajectory exactly.
 Lower values retain the same nine-outcome probability distribution, preferring
@@ -233,18 +234,18 @@ can move by that many cells in a diagonal jump.
 Configuration validation enforces the conservative continuous-speed bound:
 
 ```text
-maxSlope + maxAbsBend*(effectiveDepth - 1)
+maxSlope + maxAbsBend*(numGenerations - 1)
          + 2*PI*maxAmplitude/minWavelength <= pn.maxCellsPerAxisPerLayer
 ```
 
 Excessive settings throw an error before grid allocation; they are not clipped.
 Trajectory validation logs the unrounded `speedBound`, `minimumIntegerLimit`,
-`configuredLimit`, and effective `depth` to the browser console before checking
+`configuredLimit`, and `numGenerations` to the browser console before checking
 the limit, including when the configuration passes. The minimum integer limit
 is at least 1. This is the conservative range-based bound, not the exact maximum
 movement of the noise-sampled paths.
-This bound can reject curves whose terms cancel enough to be safe. Vertical
-view's greater effective depth can require a smaller bend. Ranges must be
+This bound can reject curves whose terms cancel enough to be safe. A longer
+generation count can require a smaller bend. Ranges must be
 ordered, finite float32 values; wavelength must also allow finite curve
 evaluation. Invalid trajectory-mode noise samples fail explicitly.
 
@@ -297,15 +298,23 @@ depends on recognizing special keys in a rule map.
 
 ### Views and memory
 
-By default, sideways generates `baseDepth` layers; vertical generates twice as
-many. Rotation values are multiples of PI. Each preset defines canvas scales;
+Visual depth is `baseDepth` for sideways and twice that for vertical.
+`simulation.numGenerations` sets the total number of layers, including the
+initial layer. Its current getter uses 1.5 times the effective visual depth.
+Replace the getter with `numGenerations: 1000,` to retain 1,000 layers
+independently of orientation and depth.
+The camera stays fixed to the visual depth: shorter runs leave unused space,
+while longer runs keep adding and retaining layers at the same spacing, so some
+later layers may be clipped. More generations require more memory and rendering
+time; the resulting layer positions must also fit finite float32 values.
+Rotation values are multiples of PI. Each preset defines canvas scales;
 the orthographic camera fits the rotated block's on-screen outline tightly at
 any rotation (the vertical default matches the original `ortho(-420, 420, 840, -840)` framing).
 `view.zoom` scales this padded framing: 1 leaves it unchanged, and zooming in
 can crop the block. The zoom and resulting projection must be usable as finite
 float32 values; invalid settings raise an error during startup.
-Changing view changes generation count and presentation, not shared-generation
-evolution.
+Changing view changes presentation and, with the current getter, generation
+count; it does not change shared-generation evolution.
 
 Colors are fixed by algorithm: CA draws state 0 as `rgba(0, 0, 0, 0.5)` and
 other states as opaque random RGB colors. PN draws state 0 as
@@ -328,7 +337,7 @@ tracking and reporting.
 
 Changing configuration requires reload. Each reload creates a fresh random
 palette, seed, and random CA rules; runs are not reproducible by default.
-Large grids/depths/neighborhoods still require sufficient browser resources.
+Large grids/generation counts/neighborhoods still require sufficient browser resources.
 
 ## Code layout
 

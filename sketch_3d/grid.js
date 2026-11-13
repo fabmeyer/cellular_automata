@@ -10,7 +10,7 @@ class Cell {
 function createGrid(settings) {
     const { cols, rows } = settings.grid;
     return Array.from({ length: cols }, () =>
-        Array.from({ length: rows }, () => new Array(settings.depth).fill(null)));
+        Array.from({ length: rows }, () => new Array(settings.simulation.numGenerations).fill(null)));
 }
 
 function wrapIndex(index, size) {

@@ -24,7 +24,7 @@ class Simulation {
         if (this.nextZ === 0) {
             throw new Error("Initialize the simulation before stepping");
         }
-        if (this.nextZ >= this.settings.depth) {
+        if (this.nextZ >= this.settings.simulation.numGenerations) {
             return null;
         }
         const z = this.nextZ;
@@ -65,7 +65,7 @@ function setup() {
     renderer.setup();
     simulation.initialize();
     renderer.drawLayer(simulation.grid, 0);
-    if (simulation.nextZ < simulation.settings.depth) {
+    if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
         setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
     }
 }
@@ -75,7 +75,7 @@ function nextFrame() {
     if (z !== null) {
         renderer.drawLayer(simulation.grid, z);
     }
-    if (simulation.nextZ < simulation.settings.depth) {
+    if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
         setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
     }
 }

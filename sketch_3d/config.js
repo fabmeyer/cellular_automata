@@ -10,6 +10,9 @@ const CONFIG = {
     simulation: {
         algorithm: "PN", // "CA", "PN"
         get states() { return Math.min(9, CONFIG.initial.patternSize); },
+        get numGenerations() {
+            return 1.5 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
+        }, // includes the initial layer
         timeInterval: 1
     },
     ca: {
@@ -23,16 +26,16 @@ const CONFIG = {
         boundary: "grow", // "wrap", "grow"
         maxCellsPerAxisPerLayer: 100,
         forwardProbability: 0.99,
-        noiseSpaceScale: 0.01,
+        noiseSpaceScale: 0.005,
         noiseTimeScale: 0.01,
         trajectory: {
-            slope: [0.001, 0.004], // cells per layer
-            bend: [-0.002, 0.004], // change in slope per layer
+            slope: [0.001, 0.002], // cells per layer
+            bend: [-0.001, 0.001], // change in slope per layer
             amplitude: [8, 128],
             wavelength: [32, 512],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.01,
+                spaceScale: 0.005,
                 channels: "shared" // "separate", "shared"
             }
         }
@@ -169,6 +172,10 @@ function resolveConfig(config) {
         "view.background must be between 0 and 255");
     const depth = grid.baseDepth * preset.depthMultiplier;
     positiveInteger(depth, "effective depth");
+    const generations = simulation.numGenerations;
+    positiveInteger(generations, "simulation.numGenerations");
+    requireValue(float32(generations * grid.cellSize),
+        "simulation.numGenerations and grid.cellSize must produce finite float32 layer positions");
     if (simulation.algorithm === "PN" && config.pn.mode === "trajectory") {
         const trajectory = config.pn.trajectory;
         requireValue(trajectory && typeof trajectory === "object",
@@ -182,7 +189,7 @@ function resolveConfig(config) {
         requireValue(trajectory.slope[0] >= 0, "pn.trajectory.slope must be nonnegative");
         requireValue(trajectory.amplitude[0] >= 0, "pn.trajectory.amplitude must be nonnegative");
         requireValue(trajectory.wavelength[0] > 0, "pn.trajectory.wavelength must be positive");
-        requireValue(Number.isFinite(2 * Math.PI * Math.max(1, depth - 1) / trajectory.wavelength[0]),
+        requireValue(Number.isFinite(2 * Math.PI * Math.max(1, generations - 1) / trajectory.wavelength[0]),
             "pn.trajectory.wavelength is too small for finite curve evaluation");
         const parameterNoise = trajectory.parameterNoise;
         requireValue(parameterNoise && typeof parameterNoise === "object",
@@ -190,17 +197,17 @@ function resolveConfig(config) {
         nonnegativeNumber(parameterNoise.spaceScale, "pn.trajectory.parameterNoise.spaceScale");
         choice(parameterNoise.channels, ["separate", "shared"], "pn.trajectory.parameterNoise.channels");
         const maxBend = Math.max(...trajectory.bend.map(Math.abs));
-        const speedBound = trajectory.slope[1] + maxBend * (depth - 1) +
+        const speedBound = trajectory.slope[1] + maxBend * (generations - 1) +
             2 * Math.PI * (trajectory.amplitude[1] / trajectory.wavelength[0]);
         console.log("PN trajectory movement bound (cells per axis per layer):", {
             speedBound,
             minimumIntegerLimit: Math.max(1, Math.ceil(speedBound)),
             configuredLimit: config.pn.maxCellsPerAxisPerLayer,
-            depth
+            numGenerations: generations
         });
         requireValue(speedBound <= config.pn.maxCellsPerAxisPerLayer,
             `pn.trajectory speed bound ${speedBound} must not exceed pn.maxCellsPerAxisPerLayer ` +
-            `(${config.pn.maxCellsPerAxisPerLayer}): maxSlope + maxAbsBend * (depth - 1) + ` +
+            `(${config.pn.maxCellsPerAxisPerLayer}): maxSlope + maxAbsBend * (generations - 1) + ` +
             "2 * PI * maxAmplitude / minWavelength <= pn.maxCellsPerAxisPerLayer");
     }
     if (memory.enabled) {
@@ -212,5 +219,6 @@ function resolveConfig(config) {
     positiveInteger(canvasHeight, "canvas height");
     requireValue(float32(Math.hypot(grid.cols, grid.rows, depth) * grid.cellSize * view.cameraPadding),
         "grid and view dimensions must produce finite float32 camera bounds");
-    return { ...config, depth, preset, canvasWidth, canvasHeight, memoryCapacity, matchRunLength };
+    return { ...config, simulation: { ...simulation, numGenerations: generations }, depth, preset,
+        canvasWidth, canvasHeight, memoryCapacity, matchRunLength };
 }

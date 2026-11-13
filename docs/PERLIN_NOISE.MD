@@ -79,7 +79,7 @@ All names below are under `pn.trajectory`.
 | `parameterNoise.channels` | `"separate"` or `"shared"`. | Relationship between parameter fields. | Separate fields vary differently; shared fields make all parameters rise/fall together within their ranges. |
 
 Extremely small positive wavelengths are rejected if angular evaluation over
-the effective depth would overflow.
+the configured generation count would overflow.
 
 Amplitude is the sine term's radius, with scalar peak-to-peak excursion `2*A`.
 Because displacement is measured relative to the starting phase, departure
@@ -93,16 +93,17 @@ amplitude.
 | Setting | Meaning for PN |
 | --- | --- |
 | `grid.cols`, `grid.rows` | Positive int32 plane dimensions, in cells. |
-| `grid.baseDepth` | Positive int32 base layer count, including layer 0. Effective depth also includes the selected view's depth multiplier. |
+| `grid.baseDepth` | Positive int32 base camera-framing depth in layers. Effective visual depth also includes the selected view's depth multiplier. |
 | `grid.factor` | In the supplied CONFIG getters, scales cols, rows, and baseDepth together. It is not a Perlin parameter; the derived dimensions are validated. |
 | `grid.cellSize` | Positive finite cube size in pixels. It changes presentation, not cell-space motion or noise sampling. |
 | `simulation.states` | Integer 2 through 9, including empty state 0. |
+| `simulation.numGenerations` | Positive int32 total layer count including layer 0. The current getter uses 1.5 times visual depth; replace it with a number for an independent count. |
 | `simulation.timeInterval` | Delay between rendered generations, 0 through 2147483647 milliseconds. It does not define `noiseTimeScale` or `wavelength`. |
 | `memory.enabled` | PN repetition reporting only; it does not mutate PN movement rules or trajectories. |
 
 Changing canvas size, rotation, or camera zoom does not change shared-generation
-motion. Changing effective depth can change whether a bend range passes
-validation.
+motion. Changing the generation count can change whether a bend range passes
+validation; changing visual depth alone does not affect an explicitly set count.
 
 ## 3. What space and time scales actually mean
 
@@ -328,7 +329,7 @@ S = maximum slope
 B = max(abs(minimum bend), abs(maximum bend))
 A = maximum amplitude
 W = minimum wavelength
-D = effective depth
+D = simulation.numGenerations
 
 speedBound = S + B*(D-1) + 2*PI*A/W
 ```
@@ -340,7 +341,7 @@ speedBound <= pn.maxCellsPerAxisPerLayer
 ```
 
 This is a conservative continuous-speed bound over all configured range
-combinations and the effective simulation depth. It is **not the exact maximum
+combinations and the total generation count. It is **not the exact maximum
 integer movement of the actual sampled paths**. It can reject curves whose
 terms cancel enough to be safe, and shared parameter channels do not relax
 the validation formula.
@@ -364,16 +365,16 @@ maximum allowed amplitude
     = (cap - S - B*(D-1)) * W / (2*PI)
 ```
 
-At cap 1 and depth 192:
+At cap 1 and 192 generations:
 
 - With slope/amplitude zero, bend magnitude can reach `1/191`, about 0.00524.
 - With maximum slope 0.5 and amplitude zero, bend magnitude can reach
   `0.5/191`, about 0.00262.
 - With maximum slope 1, bend and amplitude must both be zero.
 
-Those bend examples apply to depth 192, not every grid size. Effective depth is
-`grid.baseDepth * selectedView.depthMultiplier`. Increasing grid factor or
-switching to a deeper view can require smaller bends or a larger cap.
+Those bend examples apply to 192 generations, not every run. The current
+generation-count getter depends on grid factor and the selected view; an
+explicit number is independent of both.
 
 ### Startup logging
 
@@ -385,20 +386,20 @@ even when it subsequently rejects the settings:
   "speedBound": 20.08539816339745,
   "minimumIntegerLimit": 21,
   "configuredLimit": 1,
-  "depth": 192
+  "numGenerations": 192
 }
 ```
 
 - `speedBound`: calculated bound without display rounding.
 - `minimumIntegerLimit`: `max(1, ceil(speedBound))`.
 - `configuredLimit`: the chosen global cap.
-- `depth`: effective layer count.
+- `numGenerations`: total layer count including the initial layer.
 
 The log prefix is `PN trajectory movement bound (cells per axis per layer):`.
 Legacy and CA configurations do not produce this trajectory log.
 
 The example above comes from slope maximum 0.2, bend magnitude 0.1, amplitude
-8, wavelength minimum 64, and depth 192:
+8, wavelength minimum 64, and 192 generations:
 
 ```text
 0.2 + 0.1*191 + 2*PI*8/64 = 20.08539816339745
@@ -593,7 +594,7 @@ but jumps can look disconnected. Trajectory settings are inactive in this mode.
 2. Choose wavelength relative to the layer count.
 3. Choose a visible amplitude, then check the logged speed bound.
 4. Add a small slope if you want drift.
-5. Add small signed bends only after considering the full effective depth.
+5. Add small signed bends only after considering the full generation count.
 6. Adjust the two spatial scales separately: one for initial headings, one for
    curve parameter grouping.
 7. Lower probability only when irregularity is intentional.
@@ -608,7 +609,7 @@ center placement always repeats the seed and is not a sparse-center option.
 
 A speed-bound error means the requested ranges exceed the chosen cap, not that
 Perlin sampling failed. Reduce the speed contributions or raise the positive
-integer cap; do not assume cap 1 is still sufficient after increasing depth.
+integer cap; do not assume cap 1 is still sufficient after increasing generations.
 
 Zero movement scales are valid. Wavelength zero is not valid, even when
 amplitude is zero. Invalid trajectory-mode noise samples and missing movement
@@ -619,7 +620,9 @@ There is no automatic probability adjustment when setting scales to zero.
 
 ### Memory and presentation
 
-The rendered grid retains generated layers up to the configured depth. PN
+The grid retains all configured generations, including layers beyond the fixed
+visual depth. Those later layers are drawn at their normal z positions but may
+be clipped by the unchanged camera. PN
 repetition memory stores only a bounded x=0 stripe history, not full planes,
 and only reports repetition; it does not change PN rules.
 
@@ -628,7 +631,7 @@ Colors come from a random palette, not directly from noise values.
 
 Curves remain voxel-stepped. A larger cap does not add interpolation or smoother
 rendering. Parameter ranges that pass numeric validation can still exceed
-practical browser memory or rendering capacity with large grids/depths.
+practical browser memory or rendering capacity with large grids or generation counts.
 
 ## 12. Implementation and verification references
 

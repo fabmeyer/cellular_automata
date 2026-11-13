@@ -32,8 +32,12 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
     for (const [section, values] of Object.entries(overrides)) {
         config[section] = { ...config[section], ...values };
     }
+    if (!Object.hasOwn(overrides.simulation ?? {}, 'numGenerations')) {
+        config.simulation.numGenerations = config.grid.baseDepth *
+            config.view.presets[config.view.orientation]?.depthMultiplier;
+    }
     const subject = new classes.Simulation(config, random, noise);
-    return { subject, config, classes, defaults, logs };
+    return { subject, config, classes, defaults, logs, context };
 }
 
 function plain(value) {
