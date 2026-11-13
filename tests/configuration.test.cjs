@@ -22,7 +22,7 @@ test('CA and PN render the requested palette for empty and occupied states', () 
     ]) {
         const { subject, classes } = createHarness({
             grid: { cols: 3, rows: 1 }, simulation: { algorithm, states: 3 },
-            initial: { mode: 'random' }
+            initial: { mode: 'random' }, ca: { neighborhoodSize: 1 }
         });
         const samples = [0, 0.5, 0.999, 0.1, 0.2, 0.3];
         let draws = 0;
@@ -99,6 +99,7 @@ test('memory and view changes do not alter the shared generations for any algori
             for (const orientation of ['sideways', 'vertical']) {
                 for (const enabled of [false, true]) {
                     const { subject } = createHarness({
+                        grid: { baseDepth: 36 },
                         simulation: { algorithm: algorithm.algorithm, states: 3 },
                         ca: { rule: algorithm.rule, neighborhoodSize: 3,
                             cycleUniform: algorithm.cycle },
@@ -229,7 +230,7 @@ test('count rules cache histograms, sum rules share equal sums, and neither redr
         let calls = 0;
         const { subject } = createHarness({
             simulation: { algorithm: 'CA', states: 3 },
-            ca: { rule, neighborhoodSize: 3 }
+            ca: { rule, neighborhoodSize: 3, emptyStateProbability: 0.75 }
         }, { random: () => draws[calls++] });
         const ca = subject.algorithm;
         assert.equal(ca.resolveState([4, 4, 1], 0), 1);
@@ -294,33 +295,334 @@ test('CA neighborhoods include the center, wrap both axes, and read only the pre
     assert.equal(observed[1][1], 0);
 });
 
-test('memory ring rollover, consecutive matches, reset, and row-only scope retain their behavior', () => {
-    const { subject } = createHarness({
-        simulation: { algorithm: 'CA', states: 2 },
-        grid: { baseDepth: 12 },
+test('memory reports when a uniform CA cycle has no eligible rule to change', () => {
+    const { subject, logs } = createHarness({
+        grid: { cols: 3, rows: 2, baseDepth: 128 },
+        simulation: { algorithm: 'CA', states: 8 },
         initial: { mode: 'random' },
-        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: false }
+        ca: { rule: 'sum', neighborhoodSize: 3, cycleUniform: true },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 1 }
+    });
+    subject.initialize();
+    for (let z = 1; z <= 39; z++) {
+        subject.step();
+    }
+    assert.ok(logs.some(([message]) => message.includes('period=8')));
+    assert.equal(subject.algorithm.ruleMap.size, 0);
+    assert.ok(!logs.some(([message]) => message.includes('Memory changed CA rule')));
+    assert.ok(logs.some(([message]) => message.includes('no non-uniform CA rule')));
+});
+
+test('memory changes an active non-uniform interior rule when the repeated side uses uniform cycling', () => {
+    const { subject, logs } = createHarness({
+        grid: { cols: 9, rows: 1, baseDepth: 8 },
+        simulation: { algorithm: 'CA', states: 2 },
+        initial: { mode: 'random' },
+        ca: { rule: 'sum', neighborhoodSize: 3, cycleUniform: true, emptyStateProbability: 1 },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 0.25 }
+    });
+    subject.initialize();
+    subject.grid[4][0][0].state = 1;
+    subject.step();
+    subject.step();
+    assert.equal(subject.algorithm.lastLayerRuleKeys[0][0], null);
+    assert.ok(subject.algorithm.lastLayerRuleKeys.flat().some(key => key !== null));
+    assert.ok(logs.some(([message]) => message.includes('period=2')));
+    assert.ok(logs.some(([message]) => message.includes('Memory changed CA rule')));
+    assert.equal(subject.algorithm.resolveState([9, 0], 0), 1);
+});
+
+test('memory retries when a uniform cycle later has an eligible interior rule', () => {
+    const { subject, logs } = createHarness({
+        grid: { cols: 9, rows: 1, baseDepth: 8 },
+        simulation: { algorithm: 'CA', states: 2 },
+        initial: { mode: 'random' },
+        ca: { rule: 'sum', neighborhoodSize: 3, cycleUniform: true, emptyStateProbability: 1 },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 0.25 }
+    });
+    subject.initialize();
+    subject.step();
+    subject.step();
+    assert.ok(logs.some(([message]) => message.includes('no non-uniform CA rule')));
+    assert.ok(!logs.some(([message]) => message.includes('Memory changed CA rule')));
+
+    subject.grid[4][0][2].state = 1;
+    subject.step();
+    assert.ok(logs.some(([message]) => message.includes('Memory changed CA rule')));
+    assert.equal(subject.memory.items.length, 1);
+    assert.equal(subject.algorithm.resolveState([9, 0], 0), 1);
+});
+
+test('memory detects a three-generation cycle without repeated spatial stripes', () => {
+    const { subject, logs } = createHarness({
+        grid: { cols: 3, rows: 2, baseDepth: 7 },
+        simulation: { algorithm: 'CA', states: 3 },
+        initial: { mode: 'random' },
+        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: true },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 1 / 3 }
+    });
+    subject.initialize();
+    for (let x = 0; x < 3; x++) {
+        for (let y = 0; y < 2; y++) {
+            subject.grid[x][y][0].state = x;
+        }
+    }
+    for (let z = 1; z <= 5; z++) {
+        subject.step();
+    }
+    assert.deepEqual(subject.grid.map(column => column.map(layers => layers[3].state)),
+        subject.grid.map(column => column.map(layers => layers[0].state)));
+    assert.ok(logs.some(([message]) => message.includes('period=3')));
+});
+
+test('default memory threshold detects a three-generation cycle after 36 matching generations', () => {
+    const { subject, logs } = createHarness({
+        grid: { cols: 1, rows: 1, baseDepth: 192 },
+        simulation: { algorithm: 'CA', states: 3 },
+        initial: { mode: 'random' },
+        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: true },
+        memory: { enabled: true, capacityMultiplier: 4, matchRunFraction: 1 }
+    });
+    subject.initialize();
+    for (let z = 1; z < 38; z++) {
+        subject.step();
+    }
+    assert.equal(logs.length, 0);
+    subject.step();
+    assert.ok(logs.some(([message]) => message.includes('z=38') && message.includes('period=3')));
+});
+
+test('memory detects two matching quarter-depth sequences beyond its state-based capacity', () => {
+    const { subject, logs } = createHarness({
+        grid: { cols: 1, rows: 6, baseDepth: 192 },
+        simulation: { algorithm: 'CA', states: 2 },
+        initial: { mode: 'random' },
+        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: false },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 1 }
+    });
+    subject.initialize();
+    assert.equal(subject.memory.capacity, 48);
+    assert.equal(subject.memory.matchRunLength, 4);
+    subject.algorithm.lastLayerRuleKeys = [Array(6).fill(null)];
+    subject.algorithm.step = (grid, z) => {
+        for (let y = 0; y < 6; y++) {
+            grid[0][y][z] = { state: ((z % 48) >> y) & 1 };
+        }
+    };
+    for (let z = 1; z < 96; z++) {
+        subject.step();
+    }
+    assert.ok(logs.some(([message]) => message.includes('period=48')));
+});
+
+test('periods up to a quarter depth are detected even if the configured run length is larger', () => {
+    for (const period of [15, 16]) {
+        const { subject, logs } = createHarness({
+            grid: { cols: 1, rows: 4, baseDepth: 64 },
+            simulation: { algorithm: 'CA', states: 2 },
+            initial: { mode: 'random' },
+            ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: false },
+            memory: { enabled: true, capacityMultiplier: 20, matchRunFraction: 1 }
+        });
+        subject.initialize();
+        subject.algorithm.lastLayerRuleKeys = [Array(4).fill(null)];
+        subject.algorithm.step = (grid, z) => {
+            for (let y = 0; y < 4; y++) {
+                grid[0][y][z] = { state: ((z % period) >> y) & 1 };
+            }
+        };
+        for (let z = 1; z < period + 15; z++) {
+            subject.step();
+        }
+        assert.equal(logs.length, 0);
+        subject.step();
+        assert.ok(logs.some(([message]) => message.includes(`period=${period}`)));
+    }
+});
+
+test('quarter-depth history uses effective depth in both view orientations', () => {
+    for (const [orientation, capacity] of [['sideways', 47], ['vertical', 95]]) {
+        const { subject } = createHarness({
+            grid: { baseDepth: 191 },
+            simulation: { algorithm: 'CA', states: 2 },
+            ca: { rule: 'majority', neighborhoodSize: 1 },
+            initial: { mode: 'random' },
+            memory: { enabled: true, capacityMultiplier: 1 },
+            view: { orientation }
+        });
+        assert.equal(subject.settings.memoryCapacity, capacity);
+    }
+});
+
+test('a later longer cycle is reported after an earlier short cycle', () => {
+    const { subject, logs } = createHarness({
+        grid: { cols: 1, rows: 5, baseDepth: 64 },
+        simulation: { algorithm: 'CA', states: 2 },
+        initial: { mode: 'random' },
+        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: false },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 1 }
+    });
+    subject.initialize();
+    subject.algorithm.lastLayerRuleKeys = [Array(5).fill(null)];
+    subject.algorithm.step = (grid, z) => {
+        const value = z < 5 ? 0 : ((z - 5) % 16) + 1;
+        for (let y = 0; y < 5; y++) {
+            grid[0][y][z] = { state: (value >> y) & 1 };
+        }
+    };
+    for (let z = 1; z < 37; z++) {
+        subject.step();
+    }
+    assert.ok(logs.some(([message]) => message.includes('period=1')));
+    assert.ok(logs.some(([message]) => message.includes('period=16')));
+});
+
+test('memory measures a fresh repetition after every successful rule change', () => {
+    for (const multiplier of [1, 2]) {
+        const { subject, logs } = createHarness({
+            simulation: { algorithm: 'CA', states: 2 },
+            grid: { cols: 1, rows: 1, baseDepth: 64 },
+            initial: { mode: 'random' },
+            ca: { rule: 'counts', neighborhoodSize: 1, cycleUniform: false },
+            memory: { enabled: true, capacityMultiplier: multiplier, matchRunFraction: 0.75 }
+        });
+        subject.initialize();
+        subject.algorithm.ruleMap.set('1,0', 0);
+        subject.algorithm.ruleMap.set('0,1', 1);
+        const threshold = 3 * multiplier;
+        const changes = () => logs.filter(([message]) => message.startsWith('Memory changed CA rule'));
+        const notices = () => logs.filter(([message]) => message.includes('repetition threshold reached'));
+
+        for (let z = 1; z <= threshold; z++) subject.step();
+        assert.equal(changes().length, 1);
+        for (let z = 1; z <= threshold; z++) subject.step();
+        assert.equal(changes().length, 1, 'a new repetition must reach its full threshold');
+        subject.step();
+        assert.equal(changes().length, 2);
+        assert.equal(notices().length, 2);
+        assert.ok(notices().every(([message]) => message.includes('period=1')));
+        assert.equal(subject.algorithm.ruleMap.get('0,1'), 0);
+        for (let z = 1; z <= threshold; z++) subject.step();
+        assert.equal(changes().length, 2);
+        subject.step();
+        assert.equal(changes().length, 3);
+        assert.equal(notices().length, 3);
+        assert.ok(notices()[2][0].includes('period=2'));
+    }
+});
+
+test('memory logs and changes one CA rule after a repeated side-stripe run', () => {
+    const { subject, logs } = createHarness({
+        simulation: { algorithm: 'CA', states: 2 },
+        grid: { cols: 2, rows: 1, baseDepth: 16 },
+        initial: { mode: 'random' },
+        ca: { rule: 'counts', neighborhoodSize: 1, cycleUniform: false },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 0.75 }
     });
     subject.initialize();
     const memory = subject.memory;
-    assert.equal(memory.capacity, 8);
-    assert.equal(memory.compareLatestRow(), false);
-    for (let z = 1; z < 12; z++) {
-        subject.step();
-        assert.equal(memory.latestConsecutiveRun.at(-1), z);
-        assert.equal(memory.latestConsecutiveRun.length >= memory.matchRunLength, z >= 4);
-    }
-    assert.equal(memory.items.length, 8);
-    assert.equal(memory.matchIndices.length, 8);
-    assert.ok(memory.zIndices.every(z => z >= 4));
-    subject.grid[1][1][11].state = 1;
-    assert.equal(memory.hashRow(memory.extractRowStates(subject.grid, 11)),
-        memory.hashes[memory.getLatestIndex(memory.items.length, memory.head)]);
-    assert.equal(memory.findMatchingPastZIndices(memory.getLatestIndex(memory.items.length, memory.head)).length, 7);
+    assert.equal(memory.capacity, 4);
+    assert.equal(memory.matchRunLength, 3);
+    subject.algorithm.ruleMap.set('1,0', 0);
+    subject.algorithm.ruleMap.set('0,1', 1);
+
+    subject.step();
+    subject.step();
+    assert.equal(logs.length, 0);
+    subject.step();
+
+    assert.notEqual(subject.memory, memory);
+    assert.equal(subject.memory.items.length, 1);
+    assert.deepEqual(Array.from(subject.memory.getLatestRow()), [0]);
+    assert.equal(subject.algorithm.ruleMap.get('1,0'), 1);
+    assert.equal(subject.algorithm.ruleMap.get('0,1'), 1);
+    assert.equal(subject.algorithm.ruleMap.size, 2);
+    assert.ok(logs.some(([message]) => message === 'Memory changed CA rule 1,0: 0 -> 1'));
+
+    subject.step();
+    assert.equal(subject.algorithm.ruleMap.get('1,0'), 1);
+    assert.equal(logs.filter(([message]) => message.startsWith('Memory changed CA rule')).length, 1);
+
     subject.initialize();
     assert.notEqual(subject.memory, memory);
     assert.equal(subject.memory.items.length, 1);
     assert.equal(subject.algorithm.ruleMap.size, 0);
+});
+
+test('memory requires consecutive matches with the same period', () => {
+    const { subject, classes } = createHarness({
+        grid: { cols: 1, rows: 1, baseDepth: 5 },
+        simulation: { algorithm: 'CA', states: 3 },
+        initial: { mode: 'random' },
+        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: false },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 2 / 9 }
+    });
+    const memory = new classes.RowMemory(subject.settings);
+    const grid = [[[0, 1, 0, 2, 0].map(state => ({ state }))]];
+    for (let z = 0; z < 5; z++) {
+        assert.equal(memory.addLayer(grid, z), false);
+    }
+});
+
+test('memory compares the oldest retained generation before overwriting it', () => {
+    const { subject, classes } = createHarness({
+        grid: { cols: 1, rows: 3, baseDepth: 6 },
+        simulation: { algorithm: 'CA', states: 2 },
+        initial: { mode: 'random' },
+        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: false },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 0.25 }
+    });
+    const memory = new classes.RowMemory(subject.settings);
+    const stripes = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 0]];
+    const grid = [Array.from({ length: 3 }, (_, y) => stripes.map(stripe => ({ state: stripe[y] })))];
+    for (let z = 0; z < 4; z++) {
+        assert.equal(memory.addLayer(grid, z), false);
+    }
+    assert.equal(memory.addLayer(grid, 4), true);
+    assert.equal(memory.latestPeriod, 4);
+    assert.equal(memory.items.length, 4);
+    assert.deepEqual(Array.from(memory.getLatestRow()), stripes[4]);
+});
+
+test('memory reports a qualifying repeated run once even when CA has no mutable rule map', () => {
+    const { subject, logs } = createHarness({
+        grid: { cols: 2, rows: 1, baseDepth: 16 },
+        simulation: { algorithm: 'CA', states: 2 },
+        initial: { mode: 'random' },
+        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: false },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 0.75 }
+    });
+    subject.initialize();
+    logs.length = 0;
+
+    subject.step();
+    subject.step();
+    assert.equal(logs.length, 0);
+    subject.step();
+    subject.step();
+    assert.equal(logs.filter(([message]) => message.includes('repetition threshold reached')).length, 1);
+    assert.equal(logs.filter(([message]) => message.includes('no non-uniform CA rule')).length, 1);
+    assert.ok(!logs.some(([message]) => message.includes('Memory changed CA rule')));
+});
+
+test('memory does not mutate PN rules and can be disabled', () => {
+    const pn = createHarness({
+        grid: { cols: 6, rows: 1, baseDepth: 2 },
+        simulation: { algorithm: 'PN', states: 2 },
+        initial: { mode: 'random' },
+        memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 0.25 }
+    }, { random: () => 0, noise: () => 0 });
+    pn.subject.initialize();
+    const rulesBefore = Array.from(pn.subject.algorithm.ruleMap,
+        ([key, outcomes]) => [key, plain(outcomes)]);
+    pn.subject.step();
+    assert.ok(!pn.logs.some(([message]) => message.includes('Memory changed CA rule')));
+    assert.deepEqual(Array.from(pn.subject.algorithm.ruleMap,
+        ([key, outcomes]) => [key, plain(outcomes)]), rulesBefore);
+
+    const disabled = createHarness({ memory: { enabled: false } });
+    disabled.subject.initialize();
+    assert.equal(disabled.subject.memory, null);
 });
 
 test('both view presets frame the entire rotated volume tightly at different aspect ratios', () => {
@@ -374,26 +676,27 @@ test('invalid active options fail before allocation; inactive settings are ignor
         [{ initial: { placement: 'corners', loopPattern: 'yes' } }, /initial.loopPattern/],
         [{ view: { orientation: 'bad' } }, /view.orientation/],
         [{ memory: { enabled: 'yes' } }, /memory.enabled/],
-        [{ memory: { capacityMultiplier: 0 } }, /capacityMultiplier/],
-        [{ memory: { matchRunFraction: 0 } }, /matchRunFraction/],
+        [{ memory: { enabled: true, capacityMultiplier: 0 } }, /capacityMultiplier/],
+        [{ memory: { enabled: true, matchRunFraction: 0 } }, /matchRunFraction/],
         [{ simulation: { algorithm: 'CA' }, ca: { rule: 'bad' } }, /ca.rule/],
         [{ simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 2 } }, /must be odd/],
         [{ simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 0 } }, /neighborhoodSize/],
-        [{ simulation: { algorithm: 'CA' }, ca: { cycleUniform: 'yes' } }, /cycleUniform/],
-        [{ simulation: { algorithm: 'CA' }, ca: { rule: 'counts', emptyStateProbability: -1 } }, /emptyStateProbability/],
-        [{ pn: { noiseSpaceScale: 0 } }, /noiseSpaceScale/],
-        [{ pn: { noiseTimeScale: Infinity } }, /noiseTimeScale/],
+        [{ simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 1, cycleUniform: 'yes' } }, /cycleUniform/],
+        [{ simulation: { algorithm: 'CA' }, ca: { rule: 'counts', neighborhoodSize: 1, emptyStateProbability: -1 } }, /emptyStateProbability/],
+        [{ simulation: { algorithm: 'PN' }, pn: { noiseSpaceScale: 0 } }, /noiseSpaceScale/],
+        [{ simulation: { algorithm: 'PN' }, pn: { noiseTimeScale: Infinity } }, /noiseTimeScale/],
         [{ view: { cameraPadding: 0.5 } }, /cameraPadding/]
     ]) {
         assert.throws(() => createHarness(overrides), message);
     }
     assert.doesNotThrow(() => createHarness({
+        simulation: { algorithm: 'PN' },
         ca: { rule: 'bad', neighborhoodSize: 2, emptyStateProbability: -1 },
         initial: { mode: 'random', patternSize: -1, symmetry: 'bad', placement: 'bad', loopPattern: 'bad' },
         memory: { enabled: false, capacityMultiplier: -1, matchRunFraction: -1 }
     }));
     assert.doesNotThrow(() => createHarness({
-        simulation: { algorithm: 'CA' }, ca: { emptyStateProbability: -1 },
+        simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 1, emptyStateProbability: 0.75 },
         pn: { forwardProbability: -1, noiseSpaceScale: 0, noiseTimeScale: 0 }
     }));
     assert.doesNotThrow(() => createHarness({ initial: { placement: 'center', loopPattern: 'bad' } }));

@@ -30,8 +30,26 @@ class Simulation {
         const z = this.nextZ;
         this.algorithm.step(this.grid, z);
         if (this.memory) {
-            this.memory.addLayer(this.grid, z);
-            this.memory.compareLatestRow();
+            const ruleKeys = this.settings.simulation.algorithm === "CA"
+                ? this.algorithm.lastLayerRuleKeys : null;
+            const thresholdReached = this.memory.addLayer(this.grid, z, ruleKeys);
+            const firstNotice = thresholdReached && !this.memory.notifiedPeriods.has(this.memory.latestPeriod);
+            if (firstNotice) {
+                console.log(`Memory repetition threshold reached at z=${z}; x=0 stripe period=${this.memory.latestPeriod}`);
+                this.memory.markNotified();
+            }
+            if (thresholdReached && this.settings.simulation.algorithm === "CA") {
+                const candidates = this.memory.latestRuleKeys.length > 0
+                    ? this.memory.latestRuleKeys : ruleKeys.flat().filter(key => key !== null);
+                const mutation = this.algorithm.mutateOneRule(candidates);
+                if (mutation) {
+                    console.log(`Memory changed CA rule ${mutation.key}: ${mutation.previousState} -> ${mutation.state}`);
+                    this.memory = new RowMemory(this.settings);
+                    this.memory.addLayer(this.grid, z);
+                } else if (firstNotice) {
+                    console.log("Memory could not change a rule: no non-uniform CA rule available to change in this layer.");
+                }
+            }
         }
         this.nextZ++;
         return z;

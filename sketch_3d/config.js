@@ -14,25 +14,25 @@ const CONFIG = {
     ca: {
         rule: "sum", // "counts", "sum", "majority"
         neighborhoodSize: 3, // odd side length; includes the center cell
-        emptyStateProbability: 0.75, // shared by counts and sum
+        emptyStateProbability: 0.5, // shared by counts and sum
         cycleUniform: true
     },
     pn: {
-        forwardProbability: 0.99,
-        noiseSpaceScale: 0.99,
-        noiseTimeScale: 0.99
+        forwardProbability: 0.1,
+        noiseSpaceScale: 0.01,
+        noiseTimeScale: 0.01
     },
     initial: {
         mode: "seed", // "random" plane or reusable "seed"
-        patternSize: 7,
+        patternSize: 32,
         symmetry: "D4", // "plain", "D4"
-        placement: "corners", // "tiled", "center", "corners"
-        loopPattern: false // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
+        placement: "tiled", // "tiled", "center", "corners"
+        loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
     },
     memory: {
-        enabled: true,
-        capacityMultiplier: 4, // capacity = multiplier * states squared
-        matchRunFraction: 1 //
+        enabled: true, // CA counts/sum rules can change repeatedly; PN and majority are observational only
+        capacityMultiplier: 1, // state-based history = multiplier * states squared; history is at least depth / 4
+        matchRunFraction: 1 // fraction of state-based history required as consecutive matches (at most depth / 4 for periods up to depth / 4)
     },
     view: {
         orientation: "sideways", // "sideways", "vertical"
@@ -136,6 +136,9 @@ function resolveConfig(config) {
         "view.background must be between 0 and 255");
     const depth = grid.baseDepth * preset.depthMultiplier;
     positiveInteger(depth, "effective depth");
+    if (memory.enabled) {
+        memoryCapacity = Math.max(memoryCapacity, Math.floor(depth / 4));
+    }
     const canvasWidth = Math.ceil(grid.cols * grid.cellSize * preset.canvasScale[0]);
     const canvasHeight = Math.ceil(grid.rows * grid.cellSize * preset.canvasScale[1]);
     positiveInteger(canvasWidth, "canvas width");

@@ -34,7 +34,7 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `initial.placement` | `"tiled"`, `"center"`, `"corners"` | `"tiled"` |
 | `initial.loopPattern` | Corners only: repeat the seed across the surroundings instead of leaving them empty (state 0); center and tiled always loop | `true` |
 | `memory.enabled` | Enable row-history tracking/reporting | `true` |
-| `memory.capacityMultiplier` | Positive integer; capacity = multiplier times states squared | `2` |
+| `memory.capacityMultiplier` | Positive integer; state-based capacity = multiplier times states squared; history holds at least a quarter of the effective depth | `2` |
 | `memory.matchRunFraction` | Fraction in (0, 1] determining the repeated-match threshold | `0.5` |
 | `view.orientation` | `"sideways"` or `"vertical"` | `"vertical"` |
 | `view.presets` | Depth multiplier, canvas scale, and rotation for each orientation | Sideways depth x1; vertical depth x2 |
@@ -139,11 +139,19 @@ other states as opaque random RGB colors. PN draws state 0 as
 `rgba(0, 0, 0, 0.05)` and other states as random RGB colors with opacity `0.95`.
 
 Memory stores the **x=0 row**, not the entire plane. It uses a bounded ring,
-hashes followed by exact row comparisons, and reports matching past rows plus
-consecutive generations with matches. The reporting threshold is
-`max(1, floor(capacity * matchRunFraction))`. A repeated row is not proof of
-a repeated plane. Memory never changes rules, stops the simulation, or consumes
-random numbers; disabling it skips all tracking and reporting.
+hashes followed by exact row comparisons, and looks for consecutive matches at
+the same period. Its threshold is `max(1, floor(capacityMultiplier * states² *
+matchRunFraction))`, capped at a quarter of the effective depth for periods up
+to that length. History holds at least a quarter of the depth. A repeated row
+is not proof of a repeated plane.
+
+For CA `counts` and `sum` rules, each detected repetition changes one active
+rule, preferring the repeated row and falling back to the rest of the layer.
+Memory then starts measuring again from the current layer, so later repetitions
+can trigger further changes. Uniform cycling is not changed. If no eligible
+rule is available, memory reports this and retries on subsequent qualifying
+layers. PN and CA `majority` only report repetitions; disabling memory skips
+tracking and reporting.
 
 Changing configuration requires reload. Each reload creates a fresh random
 palette, seed, and random CA rules; runs are not reproducible by default.

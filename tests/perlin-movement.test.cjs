@@ -2,12 +2,13 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createHarness, plain } = require('./helpers.cjs');
 
-function simulation(probability = 0.5, stateCount = 2) {
+function simulation(probability = 0.5, stateCount = 2, memoryEnabled = false) {
     let phase = 0;
     let noiseValue = () => 0;
     const { subject, classes } = createHarness({
-        simulation: { states: stateCount },
+        simulation: { algorithm: 'PN', states: stateCount },
         pn: { forwardProbability: probability, noiseSpaceScale: 0.05, noiseTimeScale: 0.05 },
+        memory: { enabled: memoryEnabled },
         initial: { placement: 'corners', symmetry: 'D4', loopPattern: false }
     }, { random: () => phase, noise: (...args) => noiseValue(...args) });
     const algorithm = subject.algorithm;
@@ -257,7 +258,7 @@ test('straight-up can turn into each lateral direction, and Perlin initializes a
 
 test('binary and multistate layers maintain valid states, nonincreasing occupancy, and row history', () => {
     for (const stateCount of [2, 3]) {
-        const sim = simulation(0.73, stateCount);
+        const sim = simulation(0.73, stateCount, true);
         sim.seed([[0, 0, 1, 0, 1], [2, 2, -1, 1, stateCount - 1], [6, 6, 0, -1, stateCount - 1]]);
         sim.noise((x, y, z) => (x + y + z) % 1);
         let count = sim.occupied().length;

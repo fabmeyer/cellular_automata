@@ -6,121 +6,68 @@ class RowMemory {
         this.capacity = settings.memoryCapacity;
         this.rowLength = settings.grid.rows;
         this.matchRunLength = settings.matchRunLength;
+        this.quarterDepth = Math.floor(settings.depth / 4);
         this.head = 0;
-        this.matchIndices = [];
-        this.matchHead = 0;
-        this.latestMatchedPastZIndices = [];
-        this.latestConsecutiveRun = [];
+        this.periodRuns = new Map();
+        this.latestPeriod = null;
+        this.latestRuleKeys = [];
+        this.notifiedPeriods = new Set();
     }
 
     extractRowStates(grid, zIndex) {
-        const rowStates = new Uint8Array(this.rowLength);
+        const row = new Uint8Array(this.rowLength);
         for (let y = 0; y < this.rowLength; y++) {
-            rowStates[y] = grid[0][y][zIndex].state;
+            row[y] = grid[0][y][zIndex].state;
         }
-        return rowStates;
+        return row;
     }
 
-    hashRow(rowStates) {
+    hashRow(row) {
         let hash = 2166136261;
-        for (const state of rowStates) {
+        for (const state of row) {
             hash ^= state;
             hash = Math.imul(hash, 16777619);
         }
         return hash >>> 0;
     }
 
-    getLatestIndex(length, head) {
-        return (head + length - 1) % length;
-    }
+    addLayer(grid, zIndex, ruleKeys = null) {
+        const row = this.extractRowStates(grid, zIndex);
+        const hash = this.hashRow(row);
+        const nextRuns = new Map();
+        this.latestPeriod = null;
+        this.latestRuleKeys = [];
 
-    pushRingValue(buffer, head, value) {
-        if (buffer.length < this.capacity) {
-            buffer.push(value);
-            return buffer.length % this.capacity;
-        }
-        buffer[head] = value;
-        return (head + 1) % this.capacity;
-    }
-
-    getOrderedRing(buffer, head) {
-        return buffer.length < this.capacity ? buffer.slice() : buffer.slice(head).concat(buffer.slice(0, head));
-    }
-
-    addLayer(grid, zIndex) {
-        const rowStates = this.extractRowStates(grid, zIndex);
-        const index = this.items.length < this.capacity ? this.items.length : this.head;
-        this.items[index] = rowStates;
-        this.hashes[index] = this.hashRow(rowStates);
-        this.zIndices[index] = zIndex;
-        this.head = this.items.length < this.capacity
-            ? this.items.length % this.capacity : (this.head + 1) % this.capacity;
-    }
-
-    compareRows(rowA, rowB) {
-        return rowA.every((state, index) => state === rowB[index]);
-    }
-
-    addMatch(zIndex) {
-        this.matchHead = this.pushRingValue(this.matchIndices, this.matchHead, zIndex);
-    }
-
-    getOrderedMatches() {
-        return this.getOrderedRing(this.matchIndices, this.matchHead);
-    }
-
-    getLatestConsecutiveMatchRun() {
-        const matches = this.getOrderedMatches();
-        if (matches.length === 0) {
-            return [];
-        }
-        const run = [matches[matches.length - 1]];
-        for (let i = matches.length - 2; i >= 0 && matches[i] + 1 === run[0]; i--) {
-            run.unshift(matches[i]);
-        }
-        return run;
-    }
-
-    findMatchingPastZIndices(latestIndex) {
-        const matches = [];
         for (let i = 0; i < this.items.length; i++) {
-            if (i !== latestIndex && this.hashes[i] === this.hashes[latestIndex] &&
-                this.compareRows(this.items[latestIndex], this.items[i])) {
-                matches.push(this.zIndices[i]);
+            const period = zIndex - this.zIndices[i];
+            if (this.hashes[i] === hash && row.every((state, y) => state === this.items[i][y])) {
+                const runLength = (this.periodRuns.get(period) ?? 0) + 1;
+                nextRuns.set(period, runLength);
+                const requiredRunLength = this.quarterDepth > 0 && period <= this.quarterDepth
+                    ? Math.min(this.matchRunLength, this.quarterDepth) : this.matchRunLength;
+                if (runLength >= requiredRunLength &&
+                    (this.latestPeriod === null || period < this.latestPeriod)) {
+                    this.latestPeriod = period;
+                }
             }
         }
-        return matches;
+        this.periodRuns = nextRuns;
+
+        if (this.latestPeriod !== null && ruleKeys) {
+            this.latestRuleKeys = ruleKeys[0].filter(key => key !== null);
+        }
+        this.items[this.head] = row;
+        this.hashes[this.head] = hash;
+        this.zIndices[this.head] = zIndex;
+        this.head = (this.head + 1) % this.capacity;
+        return this.latestPeriod !== null;
     }
 
-    compareLatestRow() {
-        if (this.items.length < 2) {
-            this.latestMatchedPastZIndices = [];
-            this.latestConsecutiveRun = [];
-            return false;
-        }
-        const latestIndex = this.getLatestIndex(this.items.length, this.head);
-        const latestZIndex = this.zIndices[latestIndex];
-        const matches = this.findMatchingPastZIndices(latestIndex);
-        this.latestMatchedPastZIndices = matches;
-        if (matches.length === 0) {
-            this.latestConsecutiveRun = [];
-            return false;
-        }
-        console.log(`Match found for z=${latestZIndex} with past z-indices:`, matches,
-            `hash=${this.hashes[latestIndex]}`);
-        this.addMatch(latestZIndex);
-        this.latestConsecutiveRun = this.getLatestConsecutiveMatchRun();
-        if (this.latestConsecutiveRun.length > 1) {
-            console.log("Consecutive matched z-indices:", this.latestConsecutiveRun);
-        }
-        if (this.latestConsecutiveRun.length >= this.matchRunLength) {
-            console.log("Every z-index in the latest run has a matching past row:", this.latestConsecutiveRun);
-            return true;
-        }
-        return false;
+    markNotified() {
+        this.notifiedPeriods.add(this.latestPeriod);
     }
 
     getLatestRow() {
-        return this.items.length === 0 ? null : this.items[this.getLatestIndex(this.items.length, this.head)];
+        return this.items.length === 0 ? null : this.items[(this.head + this.items.length - 1) % this.items.length];
     }
 }

@@ -8,7 +8,8 @@ const scripts = [...fs.readFileSync(path.join(root, 'index.html'), 'utf8')
     .map(([, file]) => ({ file, source: fs.readFileSync(path.join(root, file), 'utf8') }));
 
 function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {}) {
-    const context = vm.createContext({ console: { log() {} } });
+    const logs = [];
+    const context = vm.createContext({ console: { log(...args) { logs.push(args); } } });
     for (const { file, source } of scripts) {
         vm.runInContext(source, context, { filename: file });
     }
@@ -24,7 +25,7 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
         config[section] = { ...config[section], ...values };
     }
     const subject = new classes.Simulation(config, random, noise);
-    return { subject, config, classes, defaults };
+    return { subject, config, classes, defaults, logs };
 }
 
 function plain(value) {
