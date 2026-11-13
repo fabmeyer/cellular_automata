@@ -7,8 +7,8 @@ function simulation(probability = 0.5, stateCount = 2) {
     let noiseValue = () => 0;
     const { subject, classes } = createHarness({
         simulation: { states: stateCount },
-        pn: { forwardProbability: probability },
-        initial: { placement: 'corners', symmetry: 'D4' }
+        pn: { forwardProbability: probability, noiseSpaceScale: 0.05, noiseTimeScale: 0.05 },
+        initial: { placement: 'corners', symmetry: 'D4', loopPattern: false }
     }, { random: () => phase, noise: (...args) => noiseValue(...args) });
     const algorithm = subject.algorithm;
     function seed(cells) {

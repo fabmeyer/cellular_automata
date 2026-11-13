@@ -5,7 +5,9 @@ const { createHarness, seededRandom, drawingStub, plain } = require('./helpers.c
 const initializers = [
     { mode: 'random' },
     ...['plain', 'D4'].flatMap(symmetry =>
-        ['tiled', 'center', 'corners'].map(placement => ({ mode: 'seed', symmetry, placement })))
+        [{ placement: 'tiled' }, { placement: 'center' },
+            ...[false, true].map(loopPattern => ({ placement: 'corners', loopPattern }))]
+            .map(options => ({ mode: 'seed', symmetry, ...options })))
 ];
 const algorithms = [
     { algorithm: 'PN' },
@@ -13,7 +15,7 @@ const algorithms = [
         [false, true].map(cycle => ({ algorithm: 'CA', rule, cycle })))
 ];
 
-test('all 588 algorithm/rule/cycling, initializer, view, memory, and state-count combinations run and render', () => {
+test('all 756 algorithm/rule/cycling, initializer, view, memory, and state-count combinations run and render', () => {
     let combinations = 0;
     for (const algorithm of algorithms) {
         for (const initial of initializers) {
@@ -62,7 +64,7 @@ test('all 588 algorithm/rule/cycling, initializer, view, memory, and state-count
             }
         }
     }
-    assert.equal(combinations, 588);
+    assert.equal(combinations, 756);
 });
 
 test('memory and view changes do not alter the shared generations for any algorithm or initializer', () => {
@@ -94,26 +96,52 @@ test('memory and view changes do not alter the shared generations for any algori
     }
 });
 
-test('initializers tile, center, and stamp corners on rectangular grids with empty surroundings', () => {
-    for (const initial of initializers) {
+test('initializers tile and stamp non-looping corners on rectangular grids with empty surroundings', () => {
+    for (const initial of initializers.filter(options => options.placement !== 'center' && !options.loopPattern)) {
         const { subject } = createHarness({
             grid: { cols: 6, rows: 5 }, initial, simulation: { states: 2 }
         }, { random: () => 0.75 });
         subject.initialize();
         const occupied = subject.grid.flatMap(column => column.map(layers => layers[0].state))
             .filter(state => state !== 0).length;
-        const expected = initial.mode === 'random' || initial.placement === 'tiled'
-            ? 30 : initial.placement === 'center' ? 4 : 16;
+        const expected = initial.mode === 'random' || initial.placement === 'tiled' ? 30 : 16;
         assert.equal(occupied, expected, JSON.stringify(initial));
-        if (initial.placement === 'center') {
-            assert.equal(subject.grid[2][1][0].state, 1);
-            assert.equal(subject.grid[3][2][0].state, 1);
-            assert.equal(subject.grid[0][0][0].state, 0);
-        }
         if (initial.placement === 'corners') {
             assert.equal(subject.grid[0][0][0].state, 1);
             assert.equal(subject.grid[5][4][0].state, 1);
             assert.equal(subject.grid[2][2][0].state, 0);
+        }
+    }
+});
+
+test('center always loops and looping corners repeat the placed seed seamlessly', () => {
+    for (const symmetry of ['plain', 'D4']) {
+        for (const placement of ['center', 'corners']) {
+            for (const [cols, rows, patternSize] of [[11, 7, 3], [9, 9, 4]]) {
+                // Center ignores loopPattern, so false must still loop.
+                const loopPattern = placement === 'corners';
+                const { subject } = createHarness({
+                    grid: { cols, rows }, simulation: { states: 9 },
+                    initial: { mode: 'seed', symmetry, placement, patternSize, loopPattern }
+                }, { random: seededRandom(7) });
+                subject.initialize();
+                const state = (x, y) => subject.grid[x][y][0].state;
+                const [originX, originY] = placement === 'center'
+                    ? [Math.floor((cols - patternSize) / 2), Math.floor((rows - patternSize) / 2)] : [0, 0];
+                const label = JSON.stringify({ symmetry, placement, cols, rows, patternSize });
+                for (let x = 0; x < cols; x++) {
+                    for (let y = 0; y < rows; y++) {
+                        const insideCorner = placement === 'corners' &&
+                            (x < patternSize || x >= cols - patternSize) && (y < patternSize || y >= rows - patternSize);
+                        if (insideCorner) {
+                            continue;
+                        }
+                        const tileX = originX + ((x - originX) % patternSize + patternSize) % patternSize;
+                        const tileY = originY + ((y - originY) % patternSize + patternSize) % patternSize;
+                        assert.equal(state(x, y), state(tileX, tileY), `${label} at ${x},${y}`);
+                    }
+                }
+            }
         }
     }
 });
@@ -318,6 +346,7 @@ test('invalid active options fail before allocation; inactive settings are ignor
         [{ initial: { patternSize: 9 } }, /must fit/],
         [{ initial: { symmetry: 'bad' } }, /initial.symmetry/],
         [{ initial: { placement: 'bad' } }, /initial.placement/],
+        [{ initial: { placement: 'corners', loopPattern: 'yes' } }, /initial.loopPattern/],
         [{ view: { orientation: 'bad' } }, /view.orientation/],
         [{ memory: { enabled: 'yes' } }, /memory.enabled/],
         [{ memory: { capacityMultiplier: 0 } }, /capacityMultiplier/],
@@ -335,13 +364,14 @@ test('invalid active options fail before allocation; inactive settings are ignor
     }
     assert.doesNotThrow(() => createHarness({
         ca: { rule: 'bad', neighborhoodSize: 2, emptyStateProbability: -1 },
-        initial: { mode: 'random', patternSize: -1, symmetry: 'bad', placement: 'bad' },
+        initial: { mode: 'random', patternSize: -1, symmetry: 'bad', placement: 'bad', loopPattern: 'bad' },
         memory: { enabled: false, capacityMultiplier: -1, matchRunFraction: -1 }
     }));
     assert.doesNotThrow(() => createHarness({
         simulation: { algorithm: 'CA' }, ca: { emptyStateProbability: -1 },
         pn: { forwardProbability: -1, noiseSpaceScale: 0, noiseTimeScale: 0 }
     }));
+    assert.doesNotThrow(() => createHarness({ initial: { placement: 'center', loopPattern: 'bad' } }));
 });
 
 test('a one-layer simulation completes without generating an out-of-bounds layer', () => {

@@ -32,6 +32,7 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `initial.patternSize` | Positive integer seed side length, fitting both plane dimensions | `16` |
 | `initial.symmetry` | `"plain"` or `"D4"` | `"plain"` |
 | `initial.placement` | `"tiled"`, `"center"`, `"corners"` | `"tiled"` |
+| `initial.loopPattern` | Corners only: repeat the seed across the surroundings instead of leaving them empty (state 0); center and tiled always loop | `true` |
 | `memory.enabled` | Enable row-history tracking/reporting | `true` |
 | `memory.capacityMultiplier` | Positive integer; capacity = multiplier times states squared | `2` |
 | `memory.matchRunFraction` | Fraction in (0, 1] determining the repeated-match threshold | `0.5` |
@@ -106,8 +107,13 @@ does not control initialization.
 - `"seed"` creates one random square. Optional D4 symmetry projects it onto its
   rotation/reflection orbits, then placement tiles it, centers it, or stamps
   identical copies into the four corners.
-- Center/corner placement starts with empty surroundings. Corner blocks that
-  overlap are stamped top-left, top-right, bottom-left, bottom-right; last wins.
+- Center placement always repeats the seed across the whole plane, aligned so
+  the centered block is one exact tile; it never leaves empty surroundings.
+- Corner placement does the same (aligned to the top-left block) when
+  `loopPattern: true`. With `loopPattern: false`, the surroundings start empty
+  (state 0). `loopPattern` is ignored for center and tiled placement.
+  Corner blocks are stamped top-left, top-right, bottom-left, bottom-right;
+  where they overlap, the last one wins.
 - Tiling accepts nondivisible dimensions and clips partial edge tiles. For
   seamless repetition across wrapped boundaries, choose a seed size dividing
   both plane dimensions.
@@ -167,7 +173,7 @@ node --test tests/*.test.cjs
 Tests load the same scripts in the same order as the page. They cover PN
 probabilities, persistence, wrapping, collisions, multistate colors, CA rules,
 initializers, validation, camera fit, and memory rollover. A small-grid matrix
-checks all 588 combinations of algorithms/rules/uniform-cycling, initializers,
+checks all 924 combinations of algorithms/rules/uniform-cycling, initializers,
 orientations, memory switches, and representative state counts (2, 3, 9).
 Additional comparisons verify that memory and view changes leave shared
 generations unchanged.

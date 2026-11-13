@@ -9,7 +9,7 @@ function d4Representative(i, j, size) {
 
 function initializeGrid(grid, settings, random) {
     const { cols, rows } = settings.grid;
-    const { mode, patternSize, symmetry, placement } = settings.initial;
+    const { mode, patternSize, symmetry, placement, loopPattern } = settings.initial;
     const randomState = () => Math.floor(random() * settings.simulation.states);
     for (let x = 0; x < cols; x++) {
         for (let y = 0; y < rows; y++) {
@@ -25,18 +25,26 @@ function initializeGrid(grid, settings, random) {
         const [i, j] = symmetry === "D4" ? d4Representative(x, y, patternSize) : [x, y];
         return seed[i][j];
     }
-    if (placement === "tiled") {
+    const origins = {
+        tiled: [[0, 0]],
+        center: [[Math.floor((cols - patternSize) / 2), Math.floor((rows - patternSize) / 2)]],
+        corners: [[0, 0], [cols - patternSize, 0], [0, rows - patternSize],
+            [cols - patternSize, rows - patternSize]]
+    }[placement];
+    // Tiled and center always loop; loopPattern only opts corner placement out of looping.
+    if (placement !== "corners" || loopPattern) {
+        // Loop the seed over the whole plane, aligned so the first placed block is one exact tile.
+        const [anchorX, anchorY] = origins[0];
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
-                setGridCell(grid, settings, x, y, 0, seedState(x % patternSize, y % patternSize));
+                setGridCell(grid, settings, x, y, 0,
+                    seedState(wrapIndex(x - anchorX, patternSize), wrapIndex(y - anchorY, patternSize)));
             }
         }
+    }
+    if (placement === "tiled") {
         return;
     }
-    const origins = placement === "center"
-        ? [[Math.floor((cols - patternSize) / 2), Math.floor((rows - patternSize) / 2)]]
-        : [[0, 0], [cols - patternSize, 0], [0, rows - patternSize],
-            [cols - patternSize, rows - patternSize]];
     // Overlapping corner blocks are stamped in this order; the last stamp wins.
     for (const [originX, originY] of origins) {
         for (let x = 0; x < patternSize; x++) {

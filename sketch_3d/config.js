@@ -1,26 +1,36 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
-    grid: { cols: 96, rows: 96, baseDepth: 192, cellSize: 4 },
-    simulation: { algorithm: "PN", states: 9, timeInterval: 1 },
+    grid: {
+        cols: 96,
+        rows: 96,
+        baseDepth: 192,
+        cellSize: 4 
+    },
+    simulation: {
+        algorithm: "CA", // "CA", "PN"
+        get states() { return Math.min(3, CONFIG.initial.patternSize); },
+        timeInterval: 1
+    },
     ca: {
-        rule: "majority", // "counts", "sum", "majority"
+        rule: "counts", // "counts", "sum", "majority"
         neighborhoodSize: 9, // odd side length; includes the center cell
-        emptyStateProbability: 0.67, // shared by counts and sum
-        cycleUniform: { counts: false, sum: false, majority: true }
+        emptyStateProbability: 0.5, // shared by counts and sum
+        cycleUniform: { counts: true, sum: false, majority: true }
     },
     pn: {
-        forwardProbability: 0.1,
-        noiseSpaceScale: 0.01,
-        noiseTimeScale: 0.01
+        forwardProbability: 0.99,
+        noiseSpaceScale: 0.99,
+        noiseTimeScale: 0.99
     },
     initial: {
         mode: "seed", // "random" plane or reusable "seed"
         patternSize: 32,
-        symmetry: "plain", // "plain", "D4"
-        placement: "tiled" // "tiled", "center", "corners"
+        symmetry: "D4", // "plain", "D4"
+        placement: "center", // "tiled", "center", "corners"
+        loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
     },
     memory: {
-        enabled: true,
+        enabled: false,
         capacityMultiplier: 2, // capacity = multiplier * states squared
         matchRunFraction: 0.5
     },
@@ -83,6 +93,9 @@ function resolveConfig(config) {
             "initial.patternSize must fit within both grid dimensions");
         choice(initial.symmetry, ["plain", "D4"], "initial.symmetry");
         choice(initial.placement, ["tiled", "center", "corners"], "initial.placement");
+        if (initial.placement === "corners") {
+            requireValue(typeof initial.loopPattern === "boolean", "initial.loopPattern must be true or false");
+        }
     }
     if (simulation.algorithm === "CA") {
         const { ca } = config;
