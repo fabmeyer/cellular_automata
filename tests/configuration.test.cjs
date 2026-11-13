@@ -718,7 +718,7 @@ test('invalid active options fail before allocation; inactive settings are ignor
         [{ simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 0 } }, /neighborhoodSize/],
         [{ simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 1, cycleUniform: 'yes' } }, /cycleUniform/],
         [{ simulation: { algorithm: 'CA' }, ca: { rule: 'counts', neighborhoodSize: 1, emptyStateProbability: -1 } }, /emptyStateProbability/],
-        [{ simulation: { algorithm: 'PN' }, pn: { noiseSpaceScale: 0 } }, /noiseSpaceScale/],
+        [{ simulation: { algorithm: 'PN' }, pn: { noiseSpaceScale: -0.01 } }, /noiseSpaceScale/],
         [{ simulation: { algorithm: 'PN' }, pn: { noiseTimeScale: Infinity } }, /noiseTimeScale/],
         [{ view: { cameraPadding: 0.5 } }, /cameraPadding/]
     ]) {
@@ -759,7 +759,7 @@ test('trajectory configuration validates ranges, noise controls, and effective-d
         [{ phase: [NaN, 0] }, /phase/],
         [{ phase: ['0', 1] }, /phase/],
         [{ parameterNoise: null }, /parameterNoise/],
-        [{ parameterNoise: { spaceScale: 0, channels: 'separate' } }, /spaceScale/],
+        [{ parameterNoise: { spaceScale: -0.01, channels: 'separate' } }, /spaceScale/],
         [{ parameterNoise: { spaceScale: 0.05, channels: 'bad' } }, /channels/],
         [{ slope: [0, 2] }, /one cell per axis/],
         [{ slope: [0, 0.5], amplitude: [1, 1], wavelength: [8, 8] }, /one cell per axis/]
@@ -774,7 +774,7 @@ test('trajectory configuration validates ranges, noise controls, and effective-d
     assert.doesNotThrow(() => createHarness({
         simulation: { algorithm: 'CA' }, pn: { mode: 'bad', trajectory: null }
     }));
-    const curved = { ...trajectory, slope: [0, 0.5], bend: [0, 0.05] };
+    const curved = { ...trajectory, slope: [0, 0.5], bend: [0, 0.05], amplitude: [0, 0] };
     assert.doesNotThrow(() => createHarness({
         grid: { baseDepth: 8 }, view: { orientation: 'sideways' },
         pn: { mode: 'trajectory', trajectory: curved }
@@ -783,4 +783,35 @@ test('trajectory configuration validates ranges, noise controls, and effective-d
         grid: { baseDepth: 8 }, view: { orientation: 'vertical' },
         pn: { mode: 'trajectory', trajectory: curved }
     }), /one cell per axis/);
+});
+
+test('all three PN scales accept zero and retain finite nonnegative float32 limits', () => {
+    const { classes, config } = createHarness();
+    const float32Max = 3.4028234663852886e38;
+    for (const name of ['noiseSpaceScale', 'noiseTimeScale', 'parameterNoise.spaceScale']) {
+        for (const value of [0, 0.01, float32Max, -0.01, NaN, Infinity, '0', null, false, float32Max * 2]) {
+            const candidate = structuredClone(config);
+            candidate.pn.mode = 'trajectory';
+            if (name === 'parameterNoise.spaceScale') {
+                candidate.pn.trajectory.parameterNoise.spaceScale = value;
+            } else {
+                candidate.pn[name] = value;
+            }
+            if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= float32Max) {
+                assert.doesNotThrow(() => classes.resolveConfig(candidate), name);
+            } else {
+                assert.throws(() => classes.resolveConfig(candidate), /nonnegative finite 32-bit float/, name);
+            }
+        }
+    }
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const [noiseSpaceScale, noiseTimeScale, spaceScale] of [
+            [0, 0, 0], [0, 0.01, 0.01], [0.01, 0, 0.01], [0.01, 0.01, 0]
+        ]) {
+            const candidate = structuredClone(config);
+            Object.assign(candidate.pn, { mode, noiseSpaceScale, noiseTimeScale });
+            candidate.pn.trajectory.parameterNoise.spaceScale = spaceScale;
+            assert.doesNotThrow(() => classes.resolveConfig(candidate));
+        }
+    }
 });

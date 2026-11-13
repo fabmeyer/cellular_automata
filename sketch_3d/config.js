@@ -20,18 +20,18 @@ const CONFIG = {
     },
     pn: {
         mode: "trajectory", // "legacy", "trajectory"
-        forwardProbability: 0.99,
-        noiseSpaceScale: 0.001,
-        noiseTimeScale: 0.001,
+        forwardProbability: 1.0,
+        noiseSpaceScale: 0.0,
+        noiseTimeScale: 0.1,
         trajectory: {
-            slope: [0, 0.05], // max 1
-            bend: [0, 0], // max 1
-            amplitude: [8, 16], //
-            wavelength: [128, 192],
+            slope: [0.1, 0.1], // max 1
+            bend: [-0.1, 0.1], // max 1
+            amplitude: [4, 8], //
+            wavelength: [256, 512],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.2,
-                channels: "separate" // "separate", "shared"
+                spaceScale: 0.1,
+                channels: "shared" // "separate", "shared"
             }
         }
     },
@@ -88,6 +88,9 @@ function resolveConfig(config) {
     function positiveNumber(value, name) {
         requireValue(float32(value) && value > 0, `${name} must be a positive finite 32-bit float`);
     }
+    function nonnegativeNumber(value, name) {
+        requireValue(float32(value) && value >= 0, `${name} must be a nonnegative finite 32-bit float`);
+    }
     function probability(value, name) {
         requireValue(float32(value) && value >= 0 && value <= 1,
             `${name} must be a finite 32-bit float between 0 and 1`);
@@ -132,8 +135,8 @@ function resolveConfig(config) {
     } else {
         choice(config.pn.mode, ["legacy", "trajectory"], "pn.mode");
         probability(config.pn.forwardProbability, "pn.forwardProbability");
-        positiveNumber(config.pn.noiseSpaceScale, "pn.noiseSpaceScale");
-        positiveNumber(config.pn.noiseTimeScale, "pn.noiseTimeScale");
+        nonnegativeNumber(config.pn.noiseSpaceScale, "pn.noiseSpaceScale");
+        nonnegativeNumber(config.pn.noiseTimeScale, "pn.noiseTimeScale");
     }
     requireValue(typeof memory.enabled === "boolean", "memory.enabled must be boolean");
     let memoryCapacity = 0;
@@ -178,7 +181,7 @@ function resolveConfig(config) {
         const parameterNoise = trajectory.parameterNoise;
         requireValue(parameterNoise && typeof parameterNoise === "object",
             "pn.trajectory.parameterNoise must contain spaceScale and channels");
-        positiveNumber(parameterNoise.spaceScale, "pn.trajectory.parameterNoise.spaceScale");
+        nonnegativeNumber(parameterNoise.spaceScale, "pn.trajectory.parameterNoise.spaceScale");
         choice(parameterNoise.channels, ["separate", "shared"], "pn.trajectory.parameterNoise.channels");
         const maxBend = Math.max(...trajectory.bend.map(Math.abs));
         const speedBound = trajectory.slope[1] + maxBend * (depth - 1) +

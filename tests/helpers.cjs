@@ -19,6 +19,7 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
     const config = {
         ...defaults,
         grid: { ...defaults.grid, cols: 8, rows: 8, baseDepth: 8 },
+        pn: { ...defaults.pn, mode: 'legacy' },
         initial: { ...defaults.initial, patternSize: 2 },
         view: { ...defaults.view, orientation: 'sideways' }
     };

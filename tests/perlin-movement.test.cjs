@@ -288,7 +288,7 @@ function trajectorySimulation(parameters = {}, options = {}) {
         simulation: { algorithm: 'PN', states: 3 },
         initial: { mode: 'random' },
         memory: { enabled: options.memory ?? false },
-        pn: { mode: 'trajectory', forwardProbability: options.probability ?? 1, trajectory }
+        pn: { mode: 'trajectory', forwardProbability: options.probability ?? 1, trajectory, ...options.pn }
     }, {
         random: () => phase,
         noise: options.noise ?? ((x, y, z) => z === 0 ? 5.5 / 9 : 0.5)
@@ -529,4 +529,115 @@ test('spatially varied trajectories preserve valid layers and nonincreasing occu
             assert.equal(subject.step(), null);
         }
     }
+});
+
+function assertTranslatedLayer(subject, initial, z, dx, dy) {
+    const { cols, rows } = subject.settings.grid;
+    for (let x = 0; x < cols; x++) {
+        for (let y = 0; y < rows; y++) {
+            const sourceX = ((x - dx) % cols + cols) % cols;
+            const sourceY = ((y - dy) % rows + rows) % rows;
+            assert.equal(subject.grid[x][y][z].state, initial[sourceX][sourceY]);
+        }
+    }
+}
+
+test('zero movement scales and probability one preserve collision-free legacy lines through wrapping', () => {
+    for (const [sample, dx, dy] of [[3.5 / 9, -1, 0], [8.5 / 9, 1, 1], [4.5 / 9, 0, 0]]) {
+        const calls = [];
+        const { subject } = createHarness({
+            grid: { cols: 5, rows: 4, baseDepth: 12 },
+            simulation: { algorithm: 'PN', states: 3 }, initial: { mode: 'random' },
+            memory: { enabled: false },
+            pn: { mode: 'legacy', forwardProbability: 1, noiseSpaceScale: 0, noiseTimeScale: 0 }
+        }, {
+            random: seededRandom(),
+            noise: (...coordinates) => { calls.push(coordinates); return sample; }
+        });
+        subject.initialize();
+        const initial = subject.grid.map(column => column.map(layers => layers[0].state));
+        const count = subject.algorithm.history.size;
+        for (let z = 1; z < subject.settings.depth; z++) {
+            subject.step();
+            assertTranslatedLayer(subject, initial, z, dx * z, dy * z);
+            assert.equal(subject.algorithm.history.size, count);
+        }
+        assert.ok(calls.length > 0 && calls.every(coordinates => coordinates.every(value => value === 0)));
+    }
+});
+
+test('zero time scale freezes only the time coordinate while spatial sampling remains active', () => {
+    const calls = [];
+    const { subject } = createHarness({
+        simulation: { algorithm: 'PN' }, initial: { mode: 'random' },
+        pn: { mode: 'legacy', noiseSpaceScale: 0.1, noiseTimeScale: 0 }
+    }, {
+        random: seededRandom(),
+        noise: (...coordinates) => { calls.push(coordinates); return 0.6; }
+    });
+    subject.initialize();
+    calls.length = 0;
+    subject.step();
+    subject.step();
+    assert.ok(calls.length > 0 && calls.every(([, , z]) => z === 0));
+    assert.ok(calls.some(([x, y]) => x > 0 || y > 0));
+});
+
+test('zero parameter scale synchronizes curves without collisions for both channel settings', () => {
+    for (const channels of ['separate', 'shared']) {
+        const calls = [];
+        const { subject } = createHarness({
+            grid: { cols: 5, rows: 4, baseDepth: 40 },
+            simulation: { algorithm: 'PN', states: 3 }, initial: { mode: 'random' },
+            memory: { enabled: false },
+            pn: {
+                mode: 'trajectory', forwardProbability: 1, noiseSpaceScale: 0, noiseTimeScale: 0,
+                trajectory: {
+                    slope: [0, 0.25], bend: [-0.0001, 0.0001], amplitude: [0, 2],
+                    wavelength: [32, 32], phase: [-0.5, 0.5],
+                    parameterNoise: { spaceScale: 0, channels }
+                }
+            }
+        }, {
+            random: seededRandom(),
+            noise: (x, y, z) => {
+                calls.push([x, y, z]);
+                return z === 0 ? 8.5 / 9 : (channels === 'shared' ? 0.5 : z / 10);
+            }
+        });
+        subject.initialize();
+        const initial = subject.grid.map(column => column.map(layers => layers[0].state));
+        const count = subject.algorithm.trajectories.size;
+        const parameters = subject.algorithm.trajectories.values().next().value.parameters;
+        const normalizedSlope = parameters.slope / 0.25;
+        const normalizedAmplitude = parameters.amplitude / 2;
+        assert.equal(normalizedSlope, channels === 'shared' ? normalizedAmplitude : 0.1);
+        if (channels === 'separate') assert.equal(normalizedAmplitude, 0.3);
+        for (const path of subject.algorithm.trajectories.values()) {
+            assert.deepEqual(plain(path.parameters), plain(parameters));
+        }
+        for (let z = 1; z < subject.settings.depth; z++) {
+            subject.step();
+            const { slope, bend, amplitude, wavelength, phase } = parameters;
+            const displacement = Math.trunc(slope * z + bend * z * z / 2 +
+                amplitude * (Math.sin(2 * Math.PI * z / wavelength + phase) - Math.sin(phase)));
+            assertTranslatedLayer(subject, initial, z, displacement, displacement);
+            assert.equal(subject.algorithm.trajectories.size, count);
+        }
+        assert.ok(calls.length > 0 && calls.every(([x, y]) => x === 0 && y === 0));
+    }
+});
+
+test('varying trajectory parameters can still collide with zero movement scales and probability one', () => {
+    const sim = trajectorySimulation({
+        slope: [0, 1], parameterNoise: { spaceScale: 1, channels: 'shared' }
+    }, {
+        cells: [[0, 3, 1], [1, 3, 2]],
+        pn: { noiseSpaceScale: 0, noiseTimeScale: 0 },
+        noise: (x, y, z) => z === 0 ? 5.5 / 9 : (x === 0 ? 1 : 0)
+    });
+    assert.equal(sim.subject.algorithm.trajectories.size, 2);
+    sim.subject.step();
+    assert.deepEqual(sim.position(), [1, 3]);
+    assert.equal(sim.subject.grid[1][3][1].state, 2);
 });

@@ -28,13 +28,13 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `ca.cycleUniform` | Boolean enabling uniform-neighborhood cycling for all CA rules | `true` |
 | `pn.mode` | `"legacy"` integer-direction movement or `"trajectory"` slopes/curves | `"legacy"` |
 | `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement (legacy) or following the planned movement (trajectory) | `0.1` |
-| `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Positive Perlin spatial/time scales | `0.01`, `0.01` |
+| `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Nonnegative Perlin spatial/time scales; zero fixes the corresponding sampling coordinates | `0.01`, `0.01` |
 | `pn.trajectory.slope` | Nonnegative `[min, max]` slope, in cells per layer along the initial direction | `[0, 0.5]` |
 | `pn.trajectory.bend` | Signed `[min, max]` change in slope per layer | `[0, 0]` |
 | `pn.trajectory.amplitude` | Nonnegative `[min, max]` sine displacement, in cells | `[0, 0]` |
 | `pn.trajectory.wavelength` | Positive `[min, max]` sine cycle length, in layers | `[32, 32]` |
 | `pn.trajectory.phase` | `[min, max]` sine phase, in radians | `[0, 2 * Math.PI]` |
-| `pn.trajectory.parameterNoise.spaceScale` | Positive spatial scale for initial parameter fields, independent of movement noise | `0.05` |
+| `pn.trajectory.parameterNoise.spaceScale` | Nonnegative spatial scale for initial parameter fields; zero gives all cells identical parameters | `0.05` |
 | `pn.trajectory.parameterNoise.channels` | `"separate"` parameter fields or one `"shared"` sample for all ranges | `"separate"` |
 | `initial.mode` | `"random"` plane or reusable `"seed"` | `"seed"` |
 | `initial.patternSize` | Positive integer seed side length, fitting both plane dimensions | `16` |
@@ -112,6 +112,31 @@ Colliding arrivals merge into the **highest arriving state**. All incoming
 displacement vectors are summed equally, then each component is reduced to its
 sign. Complete cancellation produces `[0, 0]`. Occupied-cell counts can only
 stay constant or decrease.
+
+#### Zero scales and uniform motion
+
+All three PN noise scales accept zero. They measure noise-coordinate increments
+per grid cell (space) or per layer (time), not pixels or milliseconds. A scale of
+0.5 advances one noise unit every two cells/layers; 1 advances one per cell/layer.
+One noise unit is not an exact wavelength or correlation length.
+
+- `noiseSpaceScale: 0` fixes movement noise x/y coordinates at zero, so all
+  occupied cells start with the same direction.
+- `noiseTimeScale: 0` fixes the movement noise time coordinate at zero.
+- `trajectory.parameterNoise.spaceScale: 0` gives every starting cell the same
+  sampled value for each parameter. Separate channels can still differ between
+  parameters; shared channels use one sample for all ranges.
+
+Zero freezes sampling coordinates; it does not force a zero noise value, a
+vertical direction, or zero movement. Below `forwardProbability: 1`, the shared
+random phase still allows movement alternatives.
+
+With `forwardProbability: 1` and zero movement spatial scale, legacy mode
+translates the whole layer in one fixed direction without collisions, even
+across wrapped boundaries. Trajectory mode is also collision-free if the
+parameter spatial scale is zero: all cells follow one common curved
+displacement. Spatially varying trajectory parameters can still cause collisions
+despite both movement scales being zero. Collision handling itself is unchanged.
 
 #### Trajectory slopes and curves
 
