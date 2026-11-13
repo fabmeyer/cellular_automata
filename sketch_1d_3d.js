@@ -20,15 +20,15 @@ let grid = new Array(cols).fill().map(() => new Array(rows).fill().map(() => new
 // simulation parameters
 const time_interval = 1;
 const n_states = 9; // includes empty state 0
-const forward_probability = 0.333;
-const noise_space_scale = 0.1;
-const noise_time_scale = 0.1;
+const forward_probability = 0.25;
+const noise_space_scale = 0.05;
+const noise_time_scale = 0.05;
 if (!Number.isFinite(forward_probability) || forward_probability < 0 || forward_probability > 1) {
     throw new Error("forward_probability must be a finite number between 0 and 1");
 }
 
-const pattern_size = 48;
-const divisor = 5;
+const pattern_size = 16;
+const divisor = 4;
 const neighborhood_size = 2 * Math.floor(pattern_size / divisor) + 1; // odd side length
 if (!Number.isInteger(n_states) || n_states < 2 || n_states >= 10) {
     throw new Error("n_states must be an integer between 2 and 9");
@@ -395,15 +395,15 @@ function initializeGrid() {
     //     }
     // }
     
-    // // Tile the seed matrix across the full x/y plane at z=0.
-    // for (let i = 0; i < cols; i++) {
-    //     for (let j = 0; j < rows; j++) {
-    //         const x = i * cell_size;
-    //         const y = j * cell_size;
-    //         const state = seed[i % pattern_size][j % pattern_size];
-    //         grid[i][j][0] = new Cell(x, y, 0, state);
-    //     }
-    // }
+    // Tile the whole seed matrix across the full x/y plane at z=0.
+    for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+            const x = i * cell_size;
+            const y = j * cell_size;
+            const state = seed[i % pattern_size][j % pattern_size];
+            grid[i][j][0] = new Cell(x, y, 0, state);
+        }
+    }
 
     // // Tile the seed matrix only in the center of the x/y plane at z=0, leaving the borders empty.
     // const x_offset = Math.floor((cols - tiled_size) / 2);
@@ -429,18 +429,18 @@ function initializeGrid() {
     //     }
     // }
 
-    // Tile the D4-symmetric block at the corners, leaving the center empty.
-    const x_offset = Math.floor((cols - tiled_size) / 2);
-    const y_offset = Math.floor((rows - tiled_size) / 2);
-    for (let i = 0; i < tiled_size; i++) {
-        for (let j = 0; j < tiled_size; j++) {
-            const state = seed_d4[i][j];
-            grid[i][j][0] = new Cell(i * cell_size, j * cell_size, 0, state); // top-left
-            grid[cols - tiled_size + i][j][0] = new Cell((cols - tiled_size + i) * cell_size, j * cell_size, 0, state); // top-right
-            grid[i][rows - tiled_size + j][0] = new Cell(i * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-left
-            grid[cols - tiled_size + i][rows - tiled_size + j][0] = new Cell((cols - tiled_size + i) * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-right
-        }
-    }
+    // // Tile the D4-symmetric block at the corners, leaving the center empty.
+    // const x_offset = Math.floor((cols - tiled_size) / 2);
+    // const y_offset = Math.floor((rows - tiled_size) / 2);
+    // for (let i = 0; i < tiled_size; i++) {
+    //     for (let j = 0; j < tiled_size; j++) {
+    //         const state = seed_d4[i][j];
+    //         grid[i][j][0] = new Cell(i * cell_size, j * cell_size, 0, state); // top-left
+    //         grid[cols - tiled_size + i][j][0] = new Cell((cols - tiled_size + i) * cell_size, j * cell_size, 0, state); // top-right
+    //         grid[i][rows - tiled_size + j][0] = new Cell(i * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-left
+    //         grid[cols - tiled_size + i][rows - tiled_size + j][0] = new Cell((cols - tiled_size + i) * cell_size, (rows - tiled_size + j) * cell_size, 0, state); // bottom-right
+    //     }
+    // }
     
     if (rule_map.has("move:1,0")) {
         for (let x = 0; x < cols; x++) {
