@@ -62,11 +62,14 @@ class PerlinMovement {
     initialize(grid) {
         this.history.clear();
         this.trajectories.clear();
+        if (this.settings.pn.boundary === "grow") {
+            grid.outsideLayers = [];
+        }
         const { cols, rows } = this.settings.grid;
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
                 if (grid[x][y][0].state !== 0) {
-                    const key = x * rows + y;
+                    const key = this.settings.pn.boundary === "grow" ? `${x},${y}` : x * rows + y;
                     const direction = this.perlinDirection(x, y, 0);
                     this.history.set(key, direction);
                     if (this.settings.pn.mode === "trajectory") {
@@ -103,6 +106,10 @@ class PerlinMovement {
     }
 
     step(grid, z) {
+        if (this.settings.pn.boundary === "grow") {
+            this.stepOutward(grid, z);
+            return;
+        }
         if (this.settings.pn.mode === "trajectory") {
             this.stepTrajectory(grid, z);
             return;
@@ -144,6 +151,79 @@ class PerlinMovement {
             nextHistory.set(key, arrival.direction.map(Math.sign));
         }
         this.history = nextHistory;
+    }
+
+    stepOutward(grid, z) {
+        const { cols, rows } = this.settings.grid;
+        const { mode, noiseSpaceScale, noiseTimeScale, maxCellsPerAxisPerLayer } = this.settings.pn;
+        const phase = this.random();
+        if (mode === "trajectory" && (!Number.isFinite(phase) || phase < 0 || phase >= 1)) {
+            throw new Error(`Invalid PN trajectory movement phase: ${phase}; expected a number in [0, 1)`);
+        }
+        const arrivals = new Map();
+        const moveCell = (x, y, state) => {
+            if (state === 0) {
+                return;
+            }
+            const key = `${x},${y}`;
+            const trajectory = mode === "trajectory" ? this.trajectories.get(key) : null;
+            const direction = this.history.get(key);
+            if (mode === "trajectory" && !trajectory) {
+                throw new Error(`Missing trajectory history for occupied cell (${x}, ${y})`);
+            }
+            if (mode === "legacy" && !direction) {
+                throw new Error(`Missing movement history for occupied cell (${x}, ${y})`);
+            }
+            const planned = trajectory ? this.trajectoryMovement(trajectory, z) : null;
+            const preferred = planned ? planned.direction : direction.map(value => value * maxCellsPerAxisPerLayer);
+            const noiseValue = mode === "trajectory"
+                ? this.checkedNoise(x * noiseSpaceScale, y * noiseSpaceScale, (z - 1) * noiseTimeScale)
+                : this.noise(x * noiseSpaceScale, y * noiseSpaceScale, (z - 1) * noiseTimeScale);
+            const sample = (noiseValue + phase) % 1;
+            const move = this.chooseMovement(preferred, sample);
+            const targetX = x + move.dx;
+            const targetY = y + move.dy;
+            if (!Number.isSafeInteger(targetX) || !Number.isSafeInteger(targetY)) {
+                throw new Error(`PN outward coordinates exceed safe integer range at layer ${z}`);
+            }
+            const targetKey = `${targetX},${targetY}`;
+            const arrival = arrivals.get(targetKey) ||
+                { x: targetX, y: targetY, state: 0, direction: [0, 0], trajectories: [] };
+            arrival.state = Math.max(arrival.state, state);
+            arrival.direction[0] += move.dx;
+            arrival.direction[1] += move.dy;
+            if (planned) {
+                arrival.trajectories.push(planned.trajectory);
+            }
+            arrivals.set(targetKey, arrival);
+        };
+        for (let x = 0; x < cols; x++) {
+            for (let y = 0; y < rows; y++) {
+                setGridCell(grid, this.settings, x, y, z, 0);
+                moveCell(x, y, grid[x][y][z - 1].state);
+            }
+        }
+        for (const cell of grid.outsideLayers[z - 1]?.values() ?? []) {
+            moveCell(cell.x, cell.y, cell.state);
+        }
+        const nextHistory = new Map();
+        const nextTrajectories = new Map();
+        const outside = new Map();
+        for (const [key, arrival] of arrivals) {
+            const { x, y, state } = arrival;
+            if (x >= 0 && x < cols && y >= 0 && y < rows) {
+                grid[x][y][z].state = state;
+            } else {
+                outside.set(key, { x, y, state });
+            }
+            nextHistory.set(key, arrival.direction.map(Math.sign));
+            if (mode === "trajectory") {
+                nextTrajectories.set(key, this.mergeTrajectories(arrival.trajectories, z));
+            }
+        }
+        grid.outsideLayers[z] = outside;
+        this.history = nextHistory;
+        this.trajectories = nextTrajectories;
     }
 
     trajectoryMovement(trajectory, z) {

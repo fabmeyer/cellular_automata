@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { createHarness, plain, seededRandom } = require('./helpers.cjs');
+const { createHarness, plain, seededRandom, drawingStub } = require('./helpers.cjs');
 
 function simulation(probability = 0.5, stateCount = 2, memoryEnabled = false, limit = 1) {
     let phase = 0;
@@ -761,4 +761,162 @@ test('jumps larger than grid dimensions wrap repeatedly and preserve signed move
         assert.deepEqual(trajectory.position(), [4, ((3 - 10 * z) % 4 + 4) % 4]);
         assert.equal(trajectory.subject.grid[4][trajectory.position()[1]][z].state, 2);
     }
+});
+
+function outwardSimulation(mode, cells, options = {}) {
+    const directions = new Map(cells.map(([x, y, , direction]) => [`${x},${y}`, direction]));
+    const trajectory = {
+        slope: [1, 1], bend: [0, 0], amplitude: [0, 0],
+        wavelength: [32, 32], phase: [0, 0],
+        parameterNoise: { spaceScale: 0, channels: 'shared' },
+        ...options.trajectory
+    };
+    const harness = createHarness({
+        grid: { cols: 4, rows: 4, baseDepth: 8 },
+        simulation: { algorithm: 'PN', states: 3 },
+        initial: { mode: 'random' },
+        memory: { enabled: options.memory ?? false },
+        pn: { mode, boundary: options.boundary ?? 'grow', forwardProbability: 1, noiseSpaceScale: 1,
+            noiseTimeScale: 0, trajectory, maxCellsPerAxisPerLayer: options.limit ?? 1 }
+    }, {
+        random: () => 0,
+        noise: (x, y, z) => {
+            options.samples?.push([x, y, z]);
+            return z === 0 ? (directions.get(`${x},${y}`) ?? 4.5 / 9) : 0.5;
+        }
+    });
+    const { subject } = harness;
+    subject.initialize();
+    for (const [x, y, state] of cells) {
+        subject.grid[x][y][0].state = state;
+    }
+    subject.algorithm.initialize(subject.grid);
+    return harness;
+}
+
+test('outward movement crosses every edge and continues at signed coordinates in both modes', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const [x, y, direction, dx, dy] of [
+            [0, 1, 3.5 / 9, -1, 0], [3, 1, 5.5 / 9, 1, 0],
+            [1, 0, 1.5 / 9, 0, -1], [1, 3, 7.5 / 9, 0, 1],
+            [0, 0, 0.5 / 9, -1, -1]
+        ]) {
+            const { subject } = outwardSimulation(mode, [[x, y, 2, direction]]);
+            for (let z = 1; z <= 3; z++) {
+                subject.step();
+                const key = `${x + z * dx},${y + z * dy}`;
+                assert.deepEqual(plain(subject.grid.outsideLayers[z].get(key)),
+                    { x: x + z * dx, y: y + z * dy, state: 2 }, `${mode} ${key}`);
+                assert.equal(subject.algorithm.history.size, 1);
+            }
+        }
+    }
+});
+
+test('outward multi-cell jumps do not wrap and exterior collisions merge in both modes', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        const { subject } = outwardSimulation(mode,
+            [[3, 1, 1, 5.5 / 9], [3, 2, 2, 2.5 / 9]],
+            { limit: 6, trajectory: { slope: [6, 6] } });
+        subject.step();
+        assert.deepEqual(plain([...subject.grid.outsideLayers[1].values()]), [
+            { x: 9, y: 1, state: 1 }, { x: 9, y: -4, state: 2 }
+        ]);
+        subject.step();
+        assert.equal(subject.grid.outsideLayers[2].size, 2);
+
+        const collision = outwardSimulation(mode,
+            [[3, 1, 1, 5.5 / 9], [3, 2, 2, 2.5 / 9]]).subject;
+        collision.step();
+        assert.deepEqual(plain([...collision.grid.outsideLayers[1].values()]),
+            [{ x: 4, y: 1, state: 2 }]);
+        assert.equal(collision.algorithm.history.size, 1);
+        if (mode === 'trajectory') {
+            assert.equal(collision.algorithm.trajectories.size, 1);
+        }
+        collision.step();
+        assert.deepEqual(plain([...collision.grid.outsideLayers[2].values()]),
+            [{ x: 5, y: mode === 'legacy' ? 0 : 1, state: 2 }]);
+    }
+});
+
+test('outward movement samples noise at exterior coordinates and matches wrap inside the plane', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        const samples = [];
+        const outside = outwardSimulation(mode, [[0, 1, 2, 3.5 / 9]], { samples }).subject;
+        outside.step();
+        samples.length = 0;
+        outside.step();
+        assert.ok(samples.some(([x, y, z]) => x === -1 && y === 1 && z === 0), mode);
+
+        const cells = [[1, 1, 1, 5.5 / 9], [2, 1, 2, 4.5 / 9]];
+        const grow = outwardSimulation(mode, cells).subject;
+        const wrap = outwardSimulation(mode, cells, { boundary: 'wrap' }).subject;
+        for (let z = 1; z <= 2; z++) {
+            grow.step();
+            wrap.step();
+            assert.deepEqual(plain(grow.grid.map(column => column.map(layers => layers[z].state))),
+                plain(wrap.grid.map(column => column.map(layers => layers[z].state))), mode);
+            assert.equal(grow.grid.outsideLayers[z].size, 0, mode);
+        }
+    }
+});
+
+test('outward paths can reverse and re-enter with original row memory intact', () => {
+    const legacy = outwardSimulation('legacy', [[0, 1, 2, 3.5 / 9]], { memory: true }).subject;
+    legacy.step();
+    assert.deepEqual(Array.from(legacy.memory.getLatestRow()), [0, 0, 0, 0]);
+    legacy.algorithm.history.set('-1,1', [1, 0]);
+    legacy.step();
+    assert.equal(legacy.grid[0][1][2].state, 2);
+    assert.equal(legacy.grid.outsideLayers[2].size, 0);
+    assert.deepEqual(Array.from(legacy.memory.getLatestRow()), [0, 2, 0, 0]);
+
+    const trajectory = outwardSimulation('trajectory', [[3, 1, 2, 5.5 / 9]], {
+        limit: 9, memory: true, trajectory: { slope: [2, 2], bend: [-1, -1] }
+    }).subject;
+    for (let z = 1; z <= 4; z++) {
+        trajectory.step();
+    }
+    assert.equal(trajectory.grid[3][1][4].state, 2);
+    assert.equal(trajectory.grid.outsideLayers[4].size, 0);
+    assert.deepEqual(Array.from(trajectory.memory.getLatestRow()), [0, 0, 0, 0]);
+});
+
+test('returning exterior cells collide with in-grid arrivals in both modes', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        const { subject } = outwardSimulation(mode,
+            [[3, 1, 2, 5.5 / 9], [2, 1, 1, 4.5 / 9]]);
+        subject.step();
+        subject.algorithm.history.set('4,1', [-1, 0]);
+        subject.algorithm.history.set('2,1', [1, 0]);
+        if (mode === 'trajectory') {
+            for (const [key, direction] of [['4,1', [-1, 0]], ['2,1', [1, 0]]]) {
+                const trajectory = subject.algorithm.trajectories.get(key);
+                trajectory.direction = direction;
+                trajectory.offset = [0, 0];
+                trajectory.origin = { z: 1, offset: [0, 0] };
+            }
+        }
+        subject.step();
+        assert.equal(subject.grid[3][1][2].state, 2, mode);
+        assert.equal(subject.algorithm.history.size, 1, mode);
+        assert.equal(subject.grid.outsideLayers[2].size, 0, mode);
+    }
+});
+
+test('renderer draws exterior cells without reframing and reinitialization clears them', () => {
+    const { subject, classes } = outwardSimulation('legacy', [[0, 1, 2, 3.5 / 9]]);
+    subject.step();
+    const { drawing, calls } = drawingStub();
+    const renderer = new classes.GridRenderer(subject.settings, drawing, () => 0);
+    renderer.setup();
+    const cameraCalls = calls.filter(([name]) => name === 'camera' || name === 'ortho');
+    renderer.drawLayer(subject.grid, 1);
+    assert.equal(calls.filter(([name]) => name === 'box').length, 17);
+    assert.deepEqual(calls.filter(([name]) => name === 'translate').at(-1),
+        ['translate', -10, -2, -10]);
+    assert.deepEqual(calls.filter(([name]) => name === 'camera' || name === 'ortho'), cameraCalls);
+    subject.initialize();
+    assert.equal(subject.grid.outsideLayers.length, 0);
 });

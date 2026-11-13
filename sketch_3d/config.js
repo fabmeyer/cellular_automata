@@ -1,7 +1,7 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        factor: 2,
+        factor: 1,
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
@@ -20,18 +20,19 @@ const CONFIG = {
     },
     pn: {
         mode: "trajectory", // "legacy", "trajectory"
-        maxCellsPerAxisPerLayer: 5,
-        forwardProbability: 1.0,
-        noiseSpaceScale: 0.00125,
-        noiseTimeScale: 0.0,
+        boundary: "grow", // "wrap", "grow"
+        maxCellsPerAxisPerLayer: 10,
+        forwardProbability: 0.99,
+        noiseSpaceScale: 0.01,
+        noiseTimeScale: 0.01,
         trajectory: {
-            slope: [0.001, 0.001], // cells per layer
-            bend: [-0.001, 0.001], // change in slope per layer
-            amplitude: [4, 16],
-            wavelength: [128, 512],
+            slope: [0.002, 0.002], // cells per layer
+            bend: [-0.004, 0.004], // change in slope per layer
+            amplitude: [4, 32],
+            wavelength: [64, 256],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.00125,
+                spaceScale: 0.01,
                 channels: "shared" // "separate", "shared"
             }
         }
@@ -49,7 +50,7 @@ const CONFIG = {
         matchRunFraction: 1 // fraction of state-based history required as consecutive matches (at most depth / 4 for periods up to depth / 4)
     },
     view: {
-        orientation: "sideways", // "sideways", "vertical"
+        orientation: "vertical", // "sideways", "vertical"
         presets: {
             sideways: {
                 depthMultiplier: 1,
@@ -135,6 +136,7 @@ function resolveConfig(config) {
         }
     } else {
         choice(config.pn.mode, ["legacy", "trajectory"], "pn.mode");
+        choice(config.pn.boundary, ["wrap", "grow"], "pn.boundary");
         positiveInteger(config.pn.maxCellsPerAxisPerLayer, "pn.maxCellsPerAxisPerLayer");
         probability(config.pn.forwardProbability, "pn.forwardProbability");
         nonnegativeNumber(config.pn.noiseSpaceScale, "pn.noiseSpaceScale");

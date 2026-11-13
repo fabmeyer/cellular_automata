@@ -27,6 +27,7 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.67` |
 | `ca.cycleUniform` | Boolean enabling uniform-neighborhood cycling for all CA rules | `true` |
 | `pn.mode` | `"legacy"` integer-direction movement or `"trajectory"` slopes/curves | `"legacy"` |
+| `pn.boundary` | `"wrap"` across plane edges or `"grow"` beyond them | `"wrap"` |
 | `pn.maxCellsPerAxisPerLayer` | Positive int32 limit in cells per axis per layer; legacy continuation speed, trajectory speed ceiling | `1` |
 | `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement (legacy) or following the planned movement (trajectory) | `0.1` |
 | `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Nonnegative Perlin spatial/time scales; zero fixes the corresponding sampling coordinates | `0.01`, `0.01` |
@@ -108,7 +109,15 @@ heading `[1, 0]` move by `[2, 0]` per layer. Each of the other eight headings
 remains an adjacent-cell alternative with probability
 `(1 - pn.forwardProbability) / 8`, regardless of the limit. Subsequent continued
 movement uses the alternative's heading at the configured speed. Staying becomes
-the stored `[0, 0]` direction. Movement wraps without reversing.
+the stored `[0, 0]` direction. With `pn.boundary: "wrap"`, movement wraps
+without reversing.
+
+Set `pn.boundary: "grow"` to let both PN modes continue beyond the original
+x/y plane instead. Paths can collide outside or return inside; z still stops
+at the configured depth. The camera remains fitted to the original block, so
+outward cells may be clipped. Only occupied cells are stored and drawn outside
+the original plane; row memory still observes the original x=0 stripe. Very
+large exterior coordinates beyond JavaScript's safe integer range raise an error.
 
 The local p5 Perlin field supplies initial directions and movement samples.
 Each generation adds one shared uniform random offset to the samples, modulo
@@ -238,7 +247,8 @@ view's greater effective depth can require a smaller bend. Ranges must be
 ordered, finite float32 values; wavelength must also allow finite curve
 evaluation. Invalid trajectory-mode noise samples fail explicitly.
 
-Both modes wrap multi-cell jumps even across multiple grid widths. Only
+With `"wrap"`, both modes wrap multi-cell jumps even across multiple grid widths.
+With `"grow"`, they retain their actual destinations. Only
 destinations are occupied and checked for collisions: crossing between layers
 or jumping over a cell does not cause a collision unless destinations coincide.
 Intermediate cells are not filled, so faster paths can leave visible gaps

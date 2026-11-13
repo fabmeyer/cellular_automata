@@ -72,6 +72,15 @@ class GridRenderer {
                 p.pop();
             }
         }
+        for (const cell of grid.outsideLayers?.[zIndex]?.values() ?? []) {
+            p.push();
+            p.fill(this.colors[cell.state]);
+            p.translate(cell.x * cellSize - cols * cellSize / 2 + cellSize / 2,
+                cell.y * cellSize - rows * cellSize / 2 + cellSize / 2,
+                (zIndex + 0.5) * cellSize - this.settings.depth * cellSize / 2);
+            p.box(cellSize, cellSize, cellSize);
+            p.pop();
+        }
         p.pop();
     }
 }

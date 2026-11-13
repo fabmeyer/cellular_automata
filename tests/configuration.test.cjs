@@ -720,6 +720,7 @@ test('invalid active options fail before allocation; inactive settings are ignor
         [{ simulation: { algorithm: 'CA' }, ca: { rule: 'counts', neighborhoodSize: 1, emptyStateProbability: -1 } }, /emptyStateProbability/],
         [{ simulation: { algorithm: 'PN' }, pn: { noiseSpaceScale: -0.01 } }, /noiseSpaceScale/],
         [{ simulation: { algorithm: 'PN' }, pn: { noiseTimeScale: Infinity } }, /noiseTimeScale/],
+        [{ simulation: { algorithm: 'PN' }, pn: { boundary: 'bad' } }, /pn.boundary/],
         [{ view: { cameraPadding: 0.5 } }, /cameraPadding/]
     ]) {
         assert.throws(() => createHarness(overrides), message);
@@ -732,7 +733,7 @@ test('invalid active options fail before allocation; inactive settings are ignor
     }));
     assert.doesNotThrow(() => createHarness({
         simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 1, emptyStateProbability: 0.75 },
-        pn: { forwardProbability: -1, noiseSpaceScale: 0, noiseTimeScale: 0 }
+        pn: { forwardProbability: -1, noiseSpaceScale: 0, noiseTimeScale: 0, boundary: 'bad' }
     }));
     assert.doesNotThrow(() => createHarness({ initial: { placement: 'center', loopPattern: 'bad' } }));
 });

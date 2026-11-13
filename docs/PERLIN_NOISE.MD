@@ -21,7 +21,7 @@ states:
 - State 0 is empty and never acts.
 - Each occupied cell has one destination in the next layer.
 - Movement preserves its state/color unless arrivals merge.
-- Plane boundaries wrap rather than bounce.
+- Plane boundaries wrap by default; the `"grow"` option continues beyond them.
 - Collisions merge occupants, so occupied-cell counts can stay constant or
   decrease, but never increase through movement.
 
@@ -54,6 +54,7 @@ independent.
 | Setting | Allowed values | Unit / meaning | Visual effect |
 | --- | --- | --- | --- |
 | `pn.mode` | `"legacy"` or `"trajectory"` | Algorithm variant. | Switches fixed-heading movement to parameterized curves. |
+| `pn.boundary` | `"wrap"` or `"grow"` | Plane boundary behavior. | Wrap at the original edges, or continue outward without wrapping. |
 | `pn.maxCellsPerAxisPerLayer` | Integer 1 through 2147483647. | Maximum cells per x or y axis per layer. | Legacy continuation speed; trajectory speed ceiling. Larger jumps can leave gaps. |
 | `pn.forwardProbability` | 0 through 1, inclusive. | Probability of selecting the preferred movement. | 1 follows a heading/trajectory exactly; smaller values allow more deviations. |
 | `pn.noiseSpaceScale` | 0 through the finite magnitude limit. | Noise-coordinate units per grid cell in x and y. | Smaller generally creates broader patches of similar initial directions and movement samples. |
@@ -433,12 +434,19 @@ Changing spatial scales may change these patches but does not guarantee their
 removal. There is currently no setting excluding stationary initial directions
 or forbidding stationary collision results.
 
-## 9. Wrapping, collisions, and zero-noise configurations
+## 9. Boundaries, collisions, and zero-noise configurations
 
 ### Destination-only movement
 
-Both modes wrap targets in x and y, even when a jump crosses multiple grid
-widths. Intermediate cells are not filled.
+With the default `pn.boundary: "wrap"`, both modes wrap targets in x and y,
+even when a jump crosses multiple grid widths. With `pn.boundary: "grow"`,
+occupied cells retain their actual coordinates beyond the original plane. They
+continue moving, can collide outside, and can return inside; the number of
+layers does not change. Only occupied exterior cells are stored and drawn.
+The camera is still fitted to the original block, so exterior cells may be
+clipped. Row memory continues to observe the original x=0 stripe. Coordinates
+outside JavaScript's safe integer range produce an error. Intermediate cells
+are not filled in either mode.
 
 Only arrivals at the same destination in the same layer collide. Two paths can
 cross between layers or jump over a cell without a collision. Faster movement
@@ -480,7 +488,7 @@ Guaranteed uniform-motion cases at probability 1:
 - Trajectory with movement spatial scale zero and parameter spatial scale zero:
   every cell follows the same time-varying displacement, without collisions.
 
-These are uniform wrapped translations and preserve cell separations. They
+These uniform translations preserve cell separations; with wrapping, they
 remain collision-free even across seams.
 
 Zero movement scales alone do not make trajectories collision-free if their
@@ -500,6 +508,7 @@ initial occupancy, or palette. All other active settings must still be valid.
 ```js
 CONFIG.pn = {
     mode: "trajectory",
+    boundary: "wrap",
     maxCellsPerAxisPerLayer: 1,
     forwardProbability: 1,
     noiseSpaceScale: 0.02,
@@ -538,6 +547,7 @@ cause many merges and change the intended shapes.
 ```js
 CONFIG.pn = {
     mode: "trajectory",
+    boundary: "wrap",
     maxCellsPerAxisPerLayer: 1,
     forwardProbability: 1,
     noiseSpaceScale: 0.02,
@@ -565,6 +575,7 @@ Different headings can still collide.
 ```js
 CONFIG.pn = {
     mode: "legacy",
+    boundary: "wrap",
     maxCellsPerAxisPerLayer: 2,
     forwardProbability: 1,
     noiseSpaceScale: 0,
