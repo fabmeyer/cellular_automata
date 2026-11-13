@@ -49,6 +49,7 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `view.orientation` | `"sideways"` or `"vertical"` | `"vertical"` |
 | `view.presets` | Depth multiplier, canvas scale, and rotation for each orientation | Sideways depth x1; vertical depth x2 |
 | `view.cameraPadding` | Margin around the tightly fitted block, at least 1; larger zooms out | `1.05` |
+| `view.zoom` | Positive zoom factor; above 1 zooms in, below 1 zooms out | `1` |
 | `view.background` | Grayscale background, 0 through 255 | `10` |
 
 Active integer settings and derived integer dimensions must fit signed 32-bit
@@ -300,6 +301,9 @@ By default, sideways generates `baseDepth` layers; vertical generates twice as
 many. Rotation values are multiples of PI. Each preset defines canvas scales;
 the orthographic camera fits the rotated block's on-screen outline tightly at
 any rotation (the vertical default matches the original `ortho(-420, 420, 840, -840)` framing).
+`view.zoom` scales this padded framing: 1 leaves it unchanged, and zooming in
+can crop the block. The zoom and resulting projection must be usable as finite
+float32 values; invalid settings raise an error during startup.
 Changing view changes generation count and presentation, not shared-generation
 evolution.
 

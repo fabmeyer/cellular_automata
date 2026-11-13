@@ -661,6 +661,55 @@ test('default vertical view keeps the original ortho(-420, 420, 840, -840) zoom'
     assert.ok(Math.abs(right - 420) / 420 < 0.01, `half width ${right}`);
 });
 
+test('zoom scales orthographic framing without changing the camera or depth clipping', () => {
+    for (const orientation of ['sideways', 'vertical']) {
+        const setup = zoom => {
+            const { subject, classes } = createHarness({ view: { orientation, zoom } });
+            const { drawing, calls } = drawingStub();
+            new classes.GridRenderer(subject.settings, drawing).setup();
+            return { settings: subject.settings, classes, calls };
+        };
+        const baseline = setup(1);
+        const camera = baseline.calls.find(([name]) => name === 'camera');
+        const canvas = baseline.calls.find(([name]) => name === 'createCanvas');
+        const ortho = baseline.calls.find(([name]) => name === 'ortho');
+        const { grid, depth, preset, canvasWidth, canvasHeight, view } = baseline.settings;
+        const { halfX, halfY } = baseline.classes.GridRenderer.projectedHalfExtents(
+            [grid.cols * grid.cellSize / 2, grid.rows * grid.cellSize / 2, depth * grid.cellSize / 2],
+            preset.rotation);
+        const aspect = canvasWidth / canvasHeight;
+        const halfHeight = Math.max(halfY, halfX / aspect) * view.cameraPadding;
+        const halfWidth = halfHeight * aspect;
+        assert.deepEqual(ortho.slice(1, 5), [-halfWidth, halfWidth, halfHeight, -halfHeight]);
+
+        for (const zoom of [0.5, 2]) {
+            const { calls } = setup(zoom);
+            assert.deepEqual(calls.find(([name]) => name === 'camera'), camera);
+            assert.deepEqual(calls.find(([name]) => name === 'createCanvas'), canvas);
+            const scaled = calls.find(([name]) => name === 'ortho');
+            for (let i = 1; i <= 4; i++) {
+                assert.equal(scaled[i], ortho[i] / zoom);
+            }
+            assert.deepEqual(scaled.slice(5), ortho.slice(5));
+        }
+    }
+});
+
+test('zoom rejects invalid settings and unusable projection bounds', () => {
+    for (const zoom of [0, -1, NaN, Infinity, '2', 3.4028234663852886e38 * 2]) {
+        assert.throws(() => createHarness({ view: { zoom } }), /view\.zoom/);
+    }
+    for (const overrides of [
+        { view: { zoom: 1e-40 } },
+        { grid: { cellSize: 1e-10 }, view: { zoom: 3.4028234663852886e38 } }
+    ]) {
+        const { subject, classes } = createHarness(overrides);
+        const { drawing, calls } = drawingStub();
+        assert.throws(() => new classes.GridRenderer(subject.settings, drawing).setup(), /view\.zoom/);
+        assert.equal(calls.length, 0);
+    }
+});
+
 test('configuration accepts int32 and float32 boundaries and rejects out-of-range values before allocation', () => {
     const { classes, config: baseline } = createHarness();
     const resolve = overrides => {

@@ -13,18 +13,22 @@ class GridRenderer {
     setup() {
         const p = this.drawing;
         const { grid, depth, canvasWidth, canvasHeight, view } = this.settings;
-        p.createCanvas(canvasWidth, canvasHeight, p.WEBGL);
         // Fit the screen-space outline of the rotated block tightly to the canvas aspect ratio.
         const { halfX, halfY } = GridRenderer.projectedHalfExtents(
             [grid.cols * grid.cellSize / 2, grid.rows * grid.cellSize / 2, depth * grid.cellSize / 2],
             this.settings.preset.rotation);
         const aspect = canvasWidth / canvasHeight;
-        const halfHeight = Math.max(halfY, halfX / aspect) * view.cameraPadding;
+        const halfHeight = Math.max(halfY, halfX / aspect) * view.cameraPadding / view.zoom;
         const halfWidth = halfHeight * aspect;
+        if (![halfWidth, halfHeight, 1 / halfWidth, 1 / halfHeight]
+            .every(value => Number.isFinite(Math.fround(value)) && Math.fround(value) > 0)) {
+            throw new Error("view.zoom must produce usable finite float32 camera bounds");
+        }
         const radius = Math.hypot(grid.cols, grid.rows, depth) * grid.cellSize / 2;
         const cameraDistance = radius + grid.cellSize;
+        p.createCanvas(canvasWidth, canvasHeight, p.WEBGL);
         p.camera(0, 0, cameraDistance, 0, 0, 0, 0, 1, 0);
-        p.ortho(-halfWidth, halfWidth, halfHeight, -halfHeight, 0, 2 * cameraDistance);
+        p.ortho(-halfWidth, halfWidth, halfHeight, -halfHeight, 0, 8 * cameraDistance);
         p.background(view.background);
         p.noLoop();
     }

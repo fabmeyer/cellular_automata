@@ -1,7 +1,7 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        factor: 1,
+        factor: 2,
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
@@ -23,16 +23,16 @@ const CONFIG = {
         boundary: "grow", // "wrap", "grow"
         maxCellsPerAxisPerLayer: 10,
         forwardProbability: 0.99,
-        noiseSpaceScale: 0.01,
-        noiseTimeScale: 0.01,
+        noiseSpaceScale: 0.0125,
+        noiseTimeScale: 0.0125,
         trajectory: {
-            slope: [0.002, 0.002], // cells per layer
-            bend: [-0.004, 0.004], // change in slope per layer
-            amplitude: [4, 32],
-            wavelength: [64, 256],
+            slope: [0.001, 0.004], // cells per layer
+            bend: [-0.002, 0.002], // change in slope per layer
+            amplitude: [8, 64],
+            wavelength: [64, 512],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.01,
+                spaceScale: 0.0125,
                 channels: "shared" // "separate", "shared"
             }
         }
@@ -64,6 +64,7 @@ const CONFIG = {
             }
         },
         cameraPadding: 1.05, // margin around the tightly fitted block; larger zooms out
+        zoom: 0.875, // values above 1 zoom in; values below 1 zoom out
         background: 10
     }
 };
@@ -163,6 +164,7 @@ function resolveConfig(config) {
         preset.rotation.every(float32), "view rotation must contain three finite float32 multiples of PI");
     positiveNumber(view.cameraPadding, "view.cameraPadding");
     requireValue(view.cameraPadding >= 1, "view.cameraPadding must be at least 1");
+    positiveNumber(view.zoom, "view.zoom");
     requireValue(float32(view.background) && view.background >= 0 && view.background <= 255,
         "view.background must be between 0 and 255");
     const depth = grid.baseDepth * preset.depthMultiplier;
