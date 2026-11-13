@@ -28,7 +28,7 @@ class GridRenderer {
         const cameraDistance = radius + grid.cellSize;
         p.createCanvas(canvasWidth, canvasHeight, p.WEBGL);
         p.camera(0, 0, cameraDistance, 0, 0, 0, 0, 1, 0);
-        p.ortho(-halfWidth, halfWidth, halfHeight, -halfHeight, 0, 8 * cameraDistance);
+        p.ortho(-halfWidth, halfWidth, halfHeight, -halfHeight, -8 * cameraDistance, 8 * cameraDistance);
         p.background(view.background);
         p.noLoop();
     }

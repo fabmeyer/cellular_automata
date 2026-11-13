@@ -21,18 +21,18 @@ const CONFIG = {
     pn: {
         mode: "trajectory", // "legacy", "trajectory"
         boundary: "grow", // "wrap", "grow"
-        maxCellsPerAxisPerLayer: 10,
+        maxCellsPerAxisPerLayer: 100,
         forwardProbability: 0.99,
-        noiseSpaceScale: 0.0125,
-        noiseTimeScale: 0.0125,
+        noiseSpaceScale: 0.01,
+        noiseTimeScale: 0.01,
         trajectory: {
             slope: [0.001, 0.004], // cells per layer
-            bend: [-0.002, 0.002], // change in slope per layer
-            amplitude: [8, 64],
-            wavelength: [64, 512],
+            bend: [-0.002, 0.004], // change in slope per layer
+            amplitude: [8, 128],
+            wavelength: [32, 512],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.0125,
+                spaceScale: 0.01,
                 channels: "shared" // "separate", "shared"
             }
         }
@@ -64,7 +64,7 @@ const CONFIG = {
             }
         },
         cameraPadding: 1.05, // margin around the tightly fitted block; larger zooms out
-        zoom: 0.875, // values above 1 zoom in; values below 1 zoom out
+        zoom: 1.0, // values above 1 zoom in; values below 1 zoom out
         background: 10
     }
 };
