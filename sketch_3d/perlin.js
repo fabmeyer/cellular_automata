@@ -78,7 +78,13 @@ class PerlinMovement {
     }
 
     chooseMovement(direction, sample) {
-        const outcomes = this.ruleMap.get(`move:${direction[0]},${direction[1]}`);
+        const limit = this.settings.pn.maxCellsPerAxisPerLayer;
+        if (!Array.isArray(direction) || direction.length !== 2 ||
+            !direction.every(value => Number.isInteger(value) && Math.abs(value) <= limit)) {
+            throw new Error(`Invalid movement direction ${direction}; maximum ${limit} cells per axis`);
+        }
+        const heading = direction.map(Math.sign);
+        const outcomes = this.ruleMap.get(`move:${heading[0]},${heading[1]}`);
         if (!outcomes) {
             throw new Error(`Missing movement rule for direction ${direction}`);
         }
@@ -87,6 +93,9 @@ class PerlinMovement {
             cumulative += outcome.probability;
             const upper = index === outcomes.length - 1 ? 1 : cumulative;
             if (sample >= 0 && sample < upper && outcome.probability > 0) {
+                if (index === 0 && (outcome.dx !== direction[0] || outcome.dy !== direction[1])) {
+                    return { ...outcome, dx: direction[0], dy: direction[1] };
+                }
                 return outcome;
             }
         }
@@ -99,7 +108,7 @@ class PerlinMovement {
             return;
         }
         const { cols, rows } = this.settings.grid;
-        const { noiseSpaceScale, noiseTimeScale } = this.settings.pn;
+        const { noiseSpaceScale, noiseTimeScale, maxCellsPerAxisPerLayer } = this.settings.pn;
         const phase = this.random();
         const arrivals = new Map();
         for (let x = 0; x < cols; x++) {
@@ -115,7 +124,8 @@ class PerlinMovement {
                 }
                 const sample = (this.noise(x * noiseSpaceScale, y * noiseSpaceScale,
                     (z - 1) * noiseTimeScale) + phase) % 1;
-                const move = this.chooseMovement(direction, sample);
+                const preferred = direction.map(value => value * maxCellsPerAxisPerLayer);
+                const move = this.chooseMovement(preferred, sample);
                 const targetX = wrapIndex(x + move.dx, cols);
                 const targetY = wrapIndex(y + move.dy, rows);
                 const key = targetX * rows + targetY;
@@ -152,8 +162,9 @@ class PerlinMovement {
             const movement = Math.trunc(value) - Math.trunc(trajectory.offset[axis]);
             return movement === 0 ? 0 : movement;
         });
-        if (direction.some(value => !Number.isInteger(value) || Math.abs(value) > 1)) {
-            throw new Error(`PN trajectory exceeded one cell per axis at layer ${z}`);
+        const limit = this.settings.pn.maxCellsPerAxisPerLayer;
+        if (direction.some(value => !Number.isInteger(value) || Math.abs(value) > limit)) {
+            throw new Error(`PN trajectory exceeded ${limit} cells per axis at layer ${z}`);
         }
         return { direction, trajectory: { ...trajectory, offset } };
     }

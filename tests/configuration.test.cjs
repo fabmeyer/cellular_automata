@@ -662,9 +662,9 @@ test('default vertical view keeps the original ortho(-420, 420, 840, -840) zoom'
 });
 
 test('configuration accepts int32 and float32 boundaries and rejects out-of-range values before allocation', () => {
-    const { classes, defaults } = createHarness();
+    const { classes, config: baseline } = createHarness();
     const resolve = overrides => {
-        const config = structuredClone(defaults);
+        const config = structuredClone(baseline);
         for (const [section, values] of Object.entries(overrides)) {
             config[section] = { ...config[section], ...values };
         }
@@ -746,8 +746,8 @@ test('a one-layer simulation completes without generating an out-of-bounds layer
 });
 
 test('trajectory configuration validates ranges, noise controls, and effective-depth speed before allocation', () => {
-    const { defaults } = createHarness();
-    const trajectory = defaults.pn.trajectory;
+    const { config } = createHarness();
+    const trajectory = config.pn.trajectory;
     for (const [values, message] of [
         [{ slope: [0.5, 0] }, /slope/],
         [{ slope: [-0.1, 0.5] }, /slope/],
@@ -761,8 +761,8 @@ test('trajectory configuration validates ranges, noise controls, and effective-d
         [{ parameterNoise: null }, /parameterNoise/],
         [{ parameterNoise: { spaceScale: -0.01, channels: 'separate' } }, /spaceScale/],
         [{ parameterNoise: { spaceScale: 0.05, channels: 'bad' } }, /channels/],
-        [{ slope: [0, 2] }, /one cell per axis/],
-        [{ slope: [0, 0.5], amplitude: [1, 1], wavelength: [8, 8] }, /one cell per axis/]
+        [{ slope: [0, 2] }, /maxCellsPerAxisPerLayer/],
+        [{ slope: [0, 0.5], amplitude: [1, 1], wavelength: [8, 8] }, /maxCellsPerAxisPerLayer/]
     ]) {
         assert.throws(() => createHarness({
             pn: { mode: 'trajectory', trajectory: { ...trajectory, ...values } }
@@ -782,7 +782,11 @@ test('trajectory configuration validates ranges, noise controls, and effective-d
     assert.throws(() => createHarness({
         grid: { baseDepth: 8 }, view: { orientation: 'vertical' },
         pn: { mode: 'trajectory', trajectory: curved }
-    }), /one cell per axis/);
+    }), /maxCellsPerAxisPerLayer/);
+    assert.doesNotThrow(() => createHarness({
+        grid: { baseDepth: 8 }, view: { orientation: 'vertical' },
+        pn: { mode: 'trajectory', trajectory: curved, maxCellsPerAxisPerLayer: 2 }
+    }));
 });
 
 test('all three PN scales accept zero and retain finite nonnegative float32 limits', () => {
@@ -814,4 +818,65 @@ test('all three PN scales accept zero and retain finite nonnegative float32 limi
             assert.doesNotThrow(() => classes.resolveConfig(candidate));
         }
     }
+});
+
+test('PN movement limit accepts positive int32 values and controls the trajectory speed bound', () => {
+    const { classes, config } = createHarness();
+    for (const value of [0, -1, 1.5, NaN, Infinity, '2', null, 2147483648]) {
+        assert.throws(() => createHarness({ pn: { maxCellsPerAxisPerLayer: value } }),
+            /pn.maxCellsPerAxisPerLayer/);
+    }
+    for (const value of [1, 2, 2147483647]) {
+        const candidate = structuredClone(config);
+        candidate.pn.maxCellsPerAxisPerLayer = value;
+        assert.doesNotThrow(() => classes.resolveConfig(candidate));
+    }
+    assert.doesNotThrow(() => createHarness({
+        simulation: { algorithm: 'CA' }, pn: { maxCellsPerAxisPerLayer: 0 }
+    }));
+    const candidate = structuredClone(config);
+    candidate.pn.mode = 'trajectory';
+    candidate.pn.trajectory.slope = [2, 2];
+    candidate.pn.maxCellsPerAxisPerLayer = 2;
+    assert.doesNotThrow(() => classes.resolveConfig(candidate));
+    candidate.pn.maxCellsPerAxisPerLayer = 1;
+    assert.throws(() => classes.resolveConfig(candidate), /speed bound 2.*maxCellsPerAxisPerLayer/);
+});
+
+test('trajectory validation logs the unrounded bound and required cap before accepting or rejecting it', () => {
+    const { classes, config, logs } = createHarness();
+    config.grid.baseDepth = 192;
+    config.pn.mode = 'trajectory';
+    config.pn.maxCellsPerAxisPerLayer = 21;
+    Object.assign(config.pn.trajectory, {
+        slope: [0.2, 0.2], bend: [-0.1, 0.1], amplitude: [8, 8], wavelength: [64, 128]
+    });
+    const speedBound = 0.2 + 0.1 * 191 + 2 * Math.PI * 8 / 64;
+    const message = 'PN trajectory movement bound (cells per axis per layer):';
+    classes.resolveConfig(config);
+    assert.deepEqual(plain(logs), [[message, {
+        speedBound, minimumIntegerLimit: 21, configuredLimit: 21, depth: 192
+    }]]);
+
+    logs.length = 0;
+    config.pn.maxCellsPerAxisPerLayer = 1;
+    assert.throws(() => classes.resolveConfig(config), /speed bound/);
+    assert.deepEqual(plain(logs), [[message, {
+        speedBound, minimumIntegerLimit: 21, configuredLimit: 1, depth: 192
+    }]]);
+
+    logs.length = 0;
+    Object.assign(config.pn.trajectory, { slope: [0, 0], bend: [0, 0], amplitude: [0, 0] });
+    classes.resolveConfig(config);
+    assert.deepEqual(plain(logs), [[message, {
+        speedBound: 0, minimumIntegerLimit: 1, configuredLimit: 1, depth: 192
+    }]]);
+
+    logs.length = 0;
+    config.pn.mode = 'legacy';
+    classes.resolveConfig(config);
+    config.pn.mode = 'trajectory';
+    config.simulation.algorithm = 'CA';
+    classes.resolveConfig(config);
+    assert.equal(logs.length, 0);
 });

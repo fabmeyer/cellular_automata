@@ -2,12 +2,13 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createHarness, plain, seededRandom } = require('./helpers.cjs');
 
-function simulation(probability = 0.5, stateCount = 2, memoryEnabled = false) {
+function simulation(probability = 0.5, stateCount = 2, memoryEnabled = false, limit = 1) {
     let phase = 0;
     let noiseValue = () => 0;
     const { subject, classes } = createHarness({
         simulation: { algorithm: 'PN', states: stateCount },
-        pn: { forwardProbability: probability, noiseSpaceScale: 0.05, noiseTimeScale: 0.05 },
+        pn: { forwardProbability: probability, noiseSpaceScale: 0.05, noiseTimeScale: 0.05,
+            maxCellsPerAxisPerLayer: limit },
         memory: { enabled: memoryEnabled },
         initial: { placement: 'corners', symmetry: 'D4', loopPattern: false }
     }, { random: () => phase, noise: (...args) => noiseValue(...args) });
@@ -78,7 +79,7 @@ test('probability boundaries skip zero-weight outcomes and reject invalid sample
     assert.notEqual(simulation(0).algorithm.chooseMovement([1, 0], 0).dx, 1);
     assert.deepEqual(plain(simulation(1).algorithm.chooseMovement([1, 0], 1 - Number.EPSILON)),
         { dx: 1, dy: 0, probability: 1 });
-    assert.throws(() => algorithm.chooseMovement([2, 0], 0), /Missing movement rule/);
+    assert.throws(() => algorithm.chooseMovement([2, 0], 0), /Invalid movement direction/);
 });
 
 test('left-to-center-to-right motion retains its direction and has exactly half the phase interval', () => {
@@ -543,13 +544,16 @@ function assertTranslatedLayer(subject, initial, z, dx, dy) {
 }
 
 test('zero movement scales and probability one preserve collision-free legacy lines through wrapping', () => {
-    for (const [sample, dx, dy] of [[3.5 / 9, -1, 0], [8.5 / 9, 1, 1], [4.5 / 9, 0, 0]]) {
+    for (const [sample, dx, dy, limit] of [
+        [3.5 / 9, -1, 0, 1], [8.5 / 9, 1, 1, 1], [4.5 / 9, 0, 0, 1], [8.5 / 9, 1, 1, 3]
+    ]) {
         const calls = [];
         const { subject } = createHarness({
             grid: { cols: 5, rows: 4, baseDepth: 12 },
             simulation: { algorithm: 'PN', states: 3 }, initial: { mode: 'random' },
             memory: { enabled: false },
-            pn: { mode: 'legacy', forwardProbability: 1, noiseSpaceScale: 0, noiseTimeScale: 0 }
+            pn: { mode: 'legacy', forwardProbability: 1, noiseSpaceScale: 0, noiseTimeScale: 0,
+                maxCellsPerAxisPerLayer: limit }
         }, {
             random: seededRandom(),
             noise: (...coordinates) => { calls.push(coordinates); return sample; }
@@ -559,7 +563,7 @@ test('zero movement scales and probability one preserve collision-free legacy li
         const count = subject.algorithm.history.size;
         for (let z = 1; z < subject.settings.depth; z++) {
             subject.step();
-            assertTranslatedLayer(subject, initial, z, dx * z, dy * z);
+            assertTranslatedLayer(subject, initial, z, dx * limit * z, dy * limit * z);
             assert.equal(subject.algorithm.history.size, count);
         }
         assert.ok(calls.length > 0 && calls.every(coordinates => coordinates.every(value => value === 0)));
@@ -584,7 +588,7 @@ test('zero time scale freezes only the time coordinate while spatial sampling re
 });
 
 test('zero parameter scale synchronizes curves without collisions for both channel settings', () => {
-    for (const channels of ['separate', 'shared']) {
+    for (const [channels, limit] of [['separate', 1], ['shared', 1], ['separate', 3], ['shared', 3]]) {
         const calls = [];
         const { subject } = createHarness({
             grid: { cols: 5, rows: 4, baseDepth: 40 },
@@ -592,6 +596,7 @@ test('zero parameter scale synchronizes curves without collisions for both chann
             memory: { enabled: false },
             pn: {
                 mode: 'trajectory', forwardProbability: 1, noiseSpaceScale: 0, noiseTimeScale: 0,
+                maxCellsPerAxisPerLayer: limit,
                 trajectory: {
                     slope: [0, 0.25], bend: [-0.0001, 0.0001], amplitude: [0, 2],
                     wavelength: [32, 32], phase: [-0.5, 0.5],
@@ -640,4 +645,120 @@ test('varying trajectory parameters can still collide with zero movement scales 
     sim.subject.step();
     assert.deepEqual(sim.position(), [1, 3]);
     assert.equal(sim.subject.grid[1][3][1].state, 2);
+});
+
+test('multi-cell preferred movements keep forward probability and eight adjacent alternatives', () => {
+    for (const probability of [0, 0.5, 1]) {
+        const { algorithm } = simulation(probability, 2, false, 3);
+        for (const direction of [[2, 0], [-2, 1], [0, -3], [0, 0]]) {
+            const heading = direction.map(Math.sign);
+            const outcomes = algorithm.ruleMap.get(`move:${heading[0]},${heading[1]}`);
+            let lower = 0;
+            for (const [index, outcome] of outcomes.entries()) {
+                if (outcome.probability > 0) {
+                    const selected = algorithm.chooseMovement(direction, lower + outcome.probability / 2);
+                    assert.deepEqual(plain(selected), index === 0
+                        ? { dx: direction[0], dy: direction[1], probability }
+                        : plain(outcome));
+                    if (index > 0) assert.ok(Math.abs(selected.dx) <= 1 && Math.abs(selected.dy) <= 1);
+                }
+                lower += outcome.probability;
+            }
+        }
+        for (const direction of [[4, 0], [-4, 0], [0.5, 0], [NaN, 0], [0], [0, 0, 0], null]) {
+            assert.throws(() => algorithm.chooseMovement(direction, 0), /Invalid movement direction/);
+        }
+    }
+});
+
+test('legacy scales continued movement but not alternatives or stationary motion', () => {
+    const sim = simulation(0.5, 3, false, 2);
+    sim.seed([[1, 3, 1, 0, 2]]);
+    sim.subject.step();
+    sim.subject.step();
+    assert.deepEqual(sim.occupied(), [[5, 3, 1, 0]]);
+    assert.equal(sim.subject.grid[5][3][2].state, 2);
+
+    sim.seed([[4, 4, 1, 0]]);
+    sim.phase(0.53);
+    sim.subject.step();
+    assert.deepEqual(sim.occupied(), [[3, 3, -1, -1]]);
+    sim.phase(0);
+    sim.subject.step();
+    assert.deepEqual(sim.occupied(), [[1, 1, -1, -1]]);
+
+    sim.seed([[3, 3, 0, 0]]);
+    sim.subject.step();
+    assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
+});
+
+test('trajectory limit permits faster signed and diagonal slopes without multiplying slower slopes', () => {
+    for (const [slope, direction, sample] of [
+        [2, [1, 0], 5.5 / 9], [2, [-1, 0], 3.5 / 9],
+        [2, [1, 1], 8.5 / 9], [0.5, [1, 0], 5.5 / 9]
+    ]) {
+        const sim = trajectorySimulation({ slope: [slope, slope] }, {
+            pn: { maxCellsPerAxisPerLayer: 2 }, noise: () => sample
+        });
+        for (let z = 1; z < 12; z++) {
+            sim.subject.step();
+            assert.deepEqual(sim.position(), direction.map((value, axis) => {
+                const size = axis === 0 ? 32 : 8;
+                return (([4, 3][axis] + value * Math.floor(slope * z)) % size + size) % size;
+            }));
+        }
+    }
+    const sim = trajectorySimulation({ slope: [2, 2] }, { pn: { maxCellsPerAxisPerLayer: 2 } });
+    sim.subject.algorithm.trajectories.values().next().value.direction = [1, 0.5];
+    sim.subject.step();
+    assert.deepEqual(sim.position(), [6, 4]);
+
+    const invalid = trajectorySimulation({ slope: [2, 2] }, { pn: { maxCellsPerAxisPerLayer: 2 } });
+    invalid.subject.algorithm.trajectories.values().next().value.parameters.slope = 3;
+    assert.throws(() => invalid.subject.step(), /exceeded 2 cells per axis/);
+});
+
+test('multi-cell legacy and trajectory jumps merge only at shared destinations, not crossing paths', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const collision of [false, true]) {
+            const right = collision ? 4 : 2;
+            const sim = mode === 'legacy'
+                ? simulation(1, 3, false, 2)
+                : trajectorySimulation({ slope: [2, 2] }, {
+                    cells: [[0, 3, 2], [right, 3, 1]], pn: { maxCellsPerAxisPerLayer: 2 }
+                });
+            if (mode === 'legacy') {
+                sim.seed([[0, 3, 1, 0, 2], [right, 3, -1, 0, 1]]);
+            } else {
+                sim.subject.algorithm.trajectories.get(right * 8 + 3).direction = [-1, 0];
+            }
+            sim.subject.step();
+            assert.equal(sim.subject.algorithm.history.size, collision ? 1 : 2);
+            assert.equal(sim.subject.grid[2][3][1].state, 2);
+            assert.equal(sim.subject.grid[1][3][1].state, 0);
+            if (collision) {
+                assert.deepEqual(Array.from(sim.subject.algorithm.history.get(2 * 8 + 3)), [0, 0]);
+            } else {
+                assert.equal(sim.subject.grid[0][3][1].state, 1);
+            }
+        }
+    }
+});
+
+test('jumps larger than grid dimensions wrap repeatedly and preserve signed movement and colors', () => {
+    const legacy = simulation(1, 3, false, 10);
+    legacy.seed([[7, 0, 1, -1, 2]]);
+    legacy.subject.step();
+    assert.deepEqual(legacy.occupied(), [[1, 6, 1, -1]]);
+    assert.equal(legacy.subject.grid[1][6][1].state, 2);
+
+    const trajectory = trajectorySimulation({ slope: [10, 10] }, {
+        grid: { cols: 5, rows: 4 }, cells: [[4, 3, 2]],
+        pn: { maxCellsPerAxisPerLayer: 10 }, noise: () => 2.5 / 9
+    });
+    for (let z = 1; z < 8; z++) {
+        trajectory.subject.step();
+        assert.deepEqual(trajectory.position(), [4, ((3 - 10 * z) % 4 + 4) % 4]);
+        assert.equal(trajectory.subject.grid[4][trajectory.position()[1]][z].state, 2);
+    }
 });

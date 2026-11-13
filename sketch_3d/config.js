@@ -20,17 +20,18 @@ const CONFIG = {
     },
     pn: {
         mode: "trajectory", // "legacy", "trajectory"
+        maxCellsPerAxisPerLayer: 100,
         forwardProbability: 1.0,
-        noiseSpaceScale: 0.0,
-        noiseTimeScale: 0.1,
+        noiseSpaceScale: 0.025,
+        noiseTimeScale: 0.0,
         trajectory: {
-            slope: [0.1, 0.1], // max 1
-            bend: [-0.1, 0.1], // max 1
-            amplitude: [4, 8], //
-            wavelength: [256, 512],
+            slope: [0.001, 0.01], // cells per layer
+            bend: [0.001, 0.01], // change in slope per layer
+            amplitude: [4, 16],
+            wavelength: [64, 256],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.1,
+                spaceScale: 0.025,
                 channels: "shared" // "separate", "shared"
             }
         }
@@ -134,6 +135,7 @@ function resolveConfig(config) {
         }
     } else {
         choice(config.pn.mode, ["legacy", "trajectory"], "pn.mode");
+        positiveInteger(config.pn.maxCellsPerAxisPerLayer, "pn.maxCellsPerAxisPerLayer");
         probability(config.pn.forwardProbability, "pn.forwardProbability");
         nonnegativeNumber(config.pn.noiseSpaceScale, "pn.noiseSpaceScale");
         nonnegativeNumber(config.pn.noiseTimeScale, "pn.noiseTimeScale");
@@ -186,9 +188,16 @@ function resolveConfig(config) {
         const maxBend = Math.max(...trajectory.bend.map(Math.abs));
         const speedBound = trajectory.slope[1] + maxBend * (depth - 1) +
             2 * Math.PI * (trajectory.amplitude[1] / trajectory.wavelength[0]);
-        requireValue(speedBound <= 1,
-            "pn.trajectory ranges must limit movement to one cell per axis per layer: " +
-            "maxSlope + maxAbsBend * (depth - 1) + 2 * PI * maxAmplitude / minWavelength <= 1");
+        console.log("PN trajectory movement bound (cells per axis per layer):", {
+            speedBound,
+            minimumIntegerLimit: Math.max(1, Math.ceil(speedBound)),
+            configuredLimit: config.pn.maxCellsPerAxisPerLayer,
+            depth
+        });
+        requireValue(speedBound <= config.pn.maxCellsPerAxisPerLayer,
+            `pn.trajectory speed bound ${speedBound} must not exceed pn.maxCellsPerAxisPerLayer ` +
+            `(${config.pn.maxCellsPerAxisPerLayer}): maxSlope + maxAbsBend * (depth - 1) + ` +
+            "2 * PI * maxAmplitude / minWavelength <= pn.maxCellsPerAxisPerLayer");
     }
     if (memory.enabled) {
         memoryCapacity = Math.max(memoryCapacity, Math.floor(depth / 4));

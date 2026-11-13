@@ -27,6 +27,7 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.67` |
 | `ca.cycleUniform` | Boolean enabling uniform-neighborhood cycling for all CA rules | `true` |
 | `pn.mode` | `"legacy"` integer-direction movement or `"trajectory"` slopes/curves | `"legacy"` |
+| `pn.maxCellsPerAxisPerLayer` | Positive int32 limit in cells per axis per layer; legacy continuation speed, trajectory speed ceiling | `1` |
 | `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement (legacy) or following the planned movement (trajectory) | `0.1` |
 | `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Nonnegative Perlin spatial/time scales; zero fixes the corresponding sampling coordinates | `0.01`, `0.01` |
 | `pn.trajectory.slope` | Nonnegative `[min, max]` slope, in cells per layer along the initial direction | `[0, 0.5]` |
@@ -97,11 +98,14 @@ occupied cell moves to one destination in the next generation and keeps its
 state/color. The default `pn.mode: "legacy"` preserves the existing movement
 algorithm described below.
 
-There are nine displacements: eight adjacent x/y directions plus `[0, 0]`
-(a straight line through time). Continue the previous displacement with
-`pn.forwardProbability`; each of the other eight has probability
-`(1 - pn.forwardProbability) / 8`. Staying becomes the stored `[0, 0]` direction.
-Movement wraps at plane boundaries without reversing.
+There are nine heading directions: eight signed x/y directions plus `[0, 0]`
+(a straight line through time). With `pn.forwardProbability`, continue the
+retained heading multiplied by `pn.maxCellsPerAxisPerLayer`. A limit of 2 makes
+heading `[1, 0]` move by `[2, 0]` per layer. Each of the other eight headings
+remains an adjacent-cell alternative with probability
+`(1 - pn.forwardProbability) / 8`, regardless of the limit. Subsequent continued
+movement uses the alternative's heading at the configured speed. Staying becomes
+the stored `[0, 0]` direction. Movement wraps without reversing.
 
 The local p5 Perlin field supplies initial directions and movement samples.
 Each generation adds one shared uniform random offset to the samples, modulo
@@ -179,6 +183,7 @@ and orientation survive pauses. For an exact half-slope, set:
 ```js
 // Within CONFIG.pn:
 mode: "trajectory",
+maxCellsPerAxisPerLayer: 1,
 forwardProbability: 1,
 trajectory: {
     slope: [0.5, 0.5],
@@ -200,21 +205,41 @@ Lower values retain the same nine-outcome probability distribution, preferring
 the trajectory's planned movement rather than the previous integer move.
 An alternative replaces that layer's planned movement with one adjacent-cell
 movement; it offsets the path locally without restarting its curve or phase.
-Existing `forwardProbability` and movement noise scales remain global.
+Alternatives use the sign of the planned displacement as their heading: planned
+`[2, 1]` uses the `[1, 1]` heading's eight alternatives. Only the preferred
+movement may jump farther than one cell. Existing `forwardProbability` and
+movement noise scales remain global.
 
-Every layer moves at most one cell per axis, with existing boundary wrapping.
+`pn.maxCellsPerAxisPerLayer` is a global positive integer from 1 through
+2147483647. In trajectory mode it raises the speed ceiling without multiplying
+the slope or curve parameters. For example, limit 2 with slope `[2, 2]` permits
+relative positions `0,2,4,...`, while slope `[0.5, 0.5]` still produces
+`0,0,1,1,2,2,...`. The limit is per axis, not Euclidean distance; both x and y
+can move by that many cells in a diagonal jump.
+
 Configuration validation enforces the conservative continuous-speed bound:
 
 ```text
 maxSlope + maxAbsBend*(effectiveDepth - 1)
-         + 2*PI*maxAmplitude/minWavelength <= 1
+         + 2*PI*maxAmplitude/minWavelength <= pn.maxCellsPerAxisPerLayer
 ```
 
 Excessive settings throw an error before grid allocation; they are not clipped.
+Trajectory validation logs the unrounded `speedBound`, `minimumIntegerLimit`,
+`configuredLimit`, and effective `depth` to the browser console before checking
+the limit, including when the configuration passes. The minimum integer limit
+is at least 1. This is the conservative range-based bound, not the exact maximum
+movement of the noise-sampled paths.
 This bound can reject curves whose terms cancel enough to be safe. Vertical
 view's greater effective depth can require a smaller bend. Ranges must be
 ordered, finite float32 values; wavelength must also allow finite curve
 evaluation. Invalid trajectory-mode noise samples fail explicitly.
+
+Both modes wrap multi-cell jumps even across multiple grid widths. Only
+destinations are occupied and checked for collisions: crossing between layers
+or jumping over a cell does not cause a collision unless destinations coincide.
+Intermediate cells are not filled, so faster paths can leave visible gaps
+between rendered cubes. The default limit 1 preserves adjacent-cell behavior.
 
 Collisions retain the highest state/color, averaging incoming retained direction
 vectors (without reducing them to signs), parameters, and fractional remainders

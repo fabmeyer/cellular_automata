@@ -19,7 +19,13 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
     const config = {
         ...defaults,
         grid: { ...defaults.grid, cols: 8, rows: 8, baseDepth: 8 },
-        pn: { ...defaults.pn, mode: 'legacy' },
+        pn: {
+            ...defaults.pn, mode: 'legacy', maxCellsPerAxisPerLayer: 1,
+            trajectory: {
+                ...defaults.pn.trajectory, slope: [0, 0.5], bend: [0, 0],
+                amplitude: [0, 0], wavelength: [32, 32], phase: [0, 2 * Math.PI]
+            }
+        },
         initial: { ...defaults.initial, patternSize: 2 },
         view: { ...defaults.view, orientation: 'sideways' }
     };
