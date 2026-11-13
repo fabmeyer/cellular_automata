@@ -12,10 +12,10 @@ const CONFIG = {
         timeInterval: 1
     },
     ca: {
-        rule: "counts", // "counts", "sum", "majority"
-        neighborhoodSize: 9, // odd side length; includes the center cell
-        emptyStateProbability: 0.5, // shared by counts and sum
-        cycleUniform: { counts: true, sum: false, majority: true }
+        rule: "sum", // "counts", "sum", "majority"
+        neighborhoodSize: 3, // odd side length; includes the center cell
+        emptyStateProbability: 0.75, // shared by counts and sum
+        cycleUniform: true
     },
     pn: {
         forwardProbability: 0.99,
@@ -24,15 +24,15 @@ const CONFIG = {
     },
     initial: {
         mode: "seed", // "random" plane or reusable "seed"
-        patternSize: 32,
+        patternSize: 7,
         symmetry: "D4", // "plain", "D4"
-        placement: "center", // "tiled", "center", "corners"
-        loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
+        placement: "corners", // "tiled", "center", "corners"
+        loopPattern: false // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
     },
     memory: {
-        enabled: false,
-        capacityMultiplier: 2, // capacity = multiplier * states squared
-        matchRunFraction: 0.5
+        enabled: true,
+        capacityMultiplier: 4, // capacity = multiplier * states squared
+        matchRunFraction: 1 //
     },
     view: {
         orientation: "sideways", // "sideways", "vertical"
@@ -49,9 +49,7 @@ const CONFIG = {
             }
         },
         cameraPadding: 1.05, // margin around the tightly fitted block; larger zooms out
-        background: 10,
-        emptyColor: "rgba(0, 0, 0, 0.05)",
-        occupiedAlpha: 0.95
+        background: 10
     }
 };
 
@@ -104,7 +102,7 @@ function resolveConfig(config) {
         requireValue(ca.neighborhoodSize % 2 === 1, "ca.neighborhoodSize must be odd");
         requireValue(Number.isSafeInteger(ca.neighborhoodSize ** 2 * (simulation.states - 1)),
             "ca.neighborhoodSize is too large for exact state sums");
-        requireValue(typeof ca.cycleUniform[ca.rule] === "boolean", "ca.cycleUniform for the selected rule must be boolean");
+        requireValue(typeof ca.cycleUniform === "boolean", "ca.cycleUniform must be boolean");
         if (ca.rule !== "majority") {
             probability(ca.emptyStateProbability, "ca.emptyStateProbability");
         }
@@ -134,9 +132,6 @@ function resolveConfig(config) {
         preset.rotation.every(Number.isFinite), "view rotation must contain three finite multiples of PI");
     positiveNumber(view.cameraPadding, "view.cameraPadding");
     requireValue(view.cameraPadding >= 1, "view.cameraPadding must be at least 1");
-    probability(view.occupiedAlpha, "view.occupiedAlpha");
-    requireValue(typeof view.emptyColor === "string" && view.emptyColor.length > 0,
-        "view.emptyColor must be a nonempty p5 color string");
     requireValue(Number.isFinite(view.background) && view.background >= 0 && view.background <= 255,
         "view.background must be between 0 and 255");
     const depth = grid.baseDepth * preset.depthMultiplier;

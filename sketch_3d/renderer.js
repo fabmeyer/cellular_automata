@@ -2,10 +2,11 @@ class GridRenderer {
     constructor(settings, drawing = globalThis, random = Math.random) {
         this.settings = settings;
         this.drawing = drawing;
-        this.colors = [settings.view.emptyColor];
+        const isCA = settings.simulation.algorithm === "CA";
+        this.colors = [isCA ? "rgba(0, 0, 0, 0.5)" : "rgba(0, 0, 0, 0.05)"];
         for (let state = 1; state < settings.simulation.states; state++) {
             const rgb = Array.from({ length: 3 }, () => Math.floor(random() * 255));
-            this.colors.push(`rgba(${rgb.join(", ")}, ${settings.view.occupiedAlpha})`);
+            this.colors.push(isCA ? `rgb(${rgb.join(", ")})` : `rgba(${rgb.join(", ")}, 0.95)`);
         }
     }
 

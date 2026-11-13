@@ -15,6 +15,31 @@ const algorithms = [
         [false, true].map(cycle => ({ algorithm: 'CA', rule, cycle })))
 ];
 
+test('CA and PN render the requested palette for empty and occupied states', () => {
+    for (const [algorithm, expected] of [
+        ['CA', ['rgba(0, 0, 0, 0.5)', 'rgb(0, 127, 254)', 'rgb(25, 51, 76)']],
+        ['PN', ['rgba(0, 0, 0, 0.05)', 'rgba(0, 127, 254, 0.95)', 'rgba(25, 51, 76, 0.95)']]
+    ]) {
+        const { subject, classes } = createHarness({
+            grid: { cols: 3, rows: 1 }, simulation: { algorithm, states: 3 },
+            initial: { mode: 'random' }
+        });
+        const samples = [0, 0.5, 0.999, 0.1, 0.2, 0.3];
+        let draws = 0;
+        const { drawing, calls } = drawingStub();
+        const renderer = new classes.GridRenderer(subject.settings, drawing, () => samples[draws++]);
+        assert.deepEqual(plain(renderer.colors), expected, algorithm);
+        assert.equal(draws, 6, algorithm);
+        subject.initialize();
+        for (let x = 0; x < 3; x++) {
+            subject.grid[x][0][0].state = x;
+        }
+        renderer.drawLayer(subject.grid, 0);
+        assert.deepEqual(calls.filter(([name]) => name === 'fill').map(([, color]) => color),
+            expected, algorithm);
+    }
+});
+
 test('all 756 algorithm/rule/cycling, initializer, view, memory, and state-count combinations run and render', () => {
     let combinations = 0;
     for (const algorithm of algorithms) {
@@ -27,7 +52,7 @@ test('all 756 algorithm/rule/cycling, initializer, view, memory, and state-count
                             grid: { cols: 6, rows: 5, baseDepth: 2 },
                             simulation: { algorithm: algorithm.algorithm, states },
                             ca: { rule: algorithm.rule, neighborhoodSize: 3,
-                                cycleUniform: { [algorithm.rule]: algorithm.cycle } },
+                                cycleUniform: algorithm.cycle },
                             initial, view: { orientation }, memory: { enabled }
                         }, { random: seededRandom(), noise: (x, y, z) => (x + y + z) % 1 });
                         const { drawing, calls } = drawingStub();
@@ -76,7 +101,7 @@ test('memory and view changes do not alter the shared generations for any algori
                     const { subject } = createHarness({
                         simulation: { algorithm: algorithm.algorithm, states: 3 },
                         ca: { rule: algorithm.rule, neighborhoodSize: 3,
-                            cycleUniform: { [algorithm.rule]: algorithm.cycle } },
+                            cycleUniform: algorithm.cycle },
                         initial, view: { orientation }, memory: { enabled }
                     }, { random: seededRandom(), noise: (x, y, z) => (x + y + z) % 1 });
                     subject.initialize();
@@ -183,7 +208,7 @@ test('overlapping corner seeds have deterministic last-stamp-wins behavior', () 
 test('majority handles unique winners, both tie cases, and uniform cycling for every state', () => {
     const { subject } = createHarness({
         simulation: { algorithm: 'CA', states: 4 },
-        ca: { rule: 'majority', neighborhoodSize: 3 }
+        ca: { rule: 'majority', neighborhoodSize: 3, cycleUniform: true }
     });
     const ca = subject.algorithm;
     assert.equal(ca.resolveState([1, 5, 2, 1], 0), 1);
@@ -194,7 +219,7 @@ test('majority handles unique winners, both tie cases, and uniform cycling for e
         counts[state] = 9;
         assert.equal(ca.resolveState(counts, state), (state + 1) % 4);
     }
-    subject.settings.ca.cycleUniform.majority = false;
+    subject.settings.ca.cycleUniform = false;
     assert.equal(ca.resolveState([0, 0, 9, 0], 2), 2);
 });
 
@@ -225,7 +250,7 @@ test('random CA uses the shared empty probability and uniform overrides take pri
             }, { random: () => 0.99 });
             const ca = subject.algorithm;
             assert.equal(ca.resolveState([3, 3, 3], 0), emptyStateProbability === 1 ? 0 : 2);
-            subject.settings.ca.cycleUniform[rule] = true;
+            subject.settings.ca.cycleUniform = true;
             assert.equal(ca.resolveState([9, 0, 0], 0), 1);
             assert.equal(ca.resolveState([0, 0, 9], 2), 0);
         }
@@ -274,7 +299,7 @@ test('memory ring rollover, consecutive matches, reset, and row-only scope retai
         simulation: { algorithm: 'CA', states: 2 },
         grid: { baseDepth: 12 },
         initial: { mode: 'random' },
-        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: { majority: false } }
+        ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: false }
     });
     subject.initialize();
     const memory = subject.memory;
@@ -354,7 +379,7 @@ test('invalid active options fail before allocation; inactive settings are ignor
         [{ simulation: { algorithm: 'CA' }, ca: { rule: 'bad' } }, /ca.rule/],
         [{ simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 2 } }, /must be odd/],
         [{ simulation: { algorithm: 'CA' }, ca: { neighborhoodSize: 0 } }, /neighborhoodSize/],
-        [{ simulation: { algorithm: 'CA' }, ca: { cycleUniform: { majority: 'yes' } } }, /cycleUniform/],
+        [{ simulation: { algorithm: 'CA' }, ca: { cycleUniform: 'yes' } }, /cycleUniform/],
         [{ simulation: { algorithm: 'CA' }, ca: { rule: 'counts', emptyStateProbability: -1 } }, /emptyStateProbability/],
         [{ pn: { noiseSpaceScale: 0 } }, /noiseSpaceScale/],
         [{ pn: { noiseTimeScale: Infinity } }, /noiseTimeScale/],

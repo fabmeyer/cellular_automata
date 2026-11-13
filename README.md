@@ -25,7 +25,7 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `ca.rule` | `"counts"`, `"sum"`, `"majority"` | `"majority"` |
 | `ca.neighborhoodSize` | Positive odd side length; independent of seed size | `9` |
 | `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.67` |
-| `ca.cycleUniform` | Separate boolean for each CA rule | Counts/sum off; majority on |
+| `ca.cycleUniform` | Boolean enabling uniform-neighborhood cycling for all CA rules | `true` |
 | `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement | `0.25` |
 | `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Positive Perlin spatial/time scales | `0.05`, `0.05` |
 | `initial.mode` | `"random"` plane or reusable `"seed"` | `"seed"` |
@@ -40,8 +40,6 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `view.presets` | Depth multiplier, canvas scale, and rotation for each orientation | Sideways depth x1; vertical depth x2 |
 | `view.cameraPadding` | Margin around the tightly fitted block, at least 1; larger zooms out | `1.05` |
 | `view.background` | Grayscale background, 0 through 255 | `10` |
-| `view.emptyColor` | p5 color string for state 0 | `"rgba(0, 0, 0, 0.05)"` |
-| `view.occupiedAlpha` | Opacity in [0, 1] for random occupied-state colors | `0.95` |
 
 For example, select majority-voting CA by changing `simulation.algorithm` to
 `"CA"` and `ca.rule` to `"majority"`. To place a symmetric seed in the center,
@@ -70,10 +68,10 @@ enumerating the enormous count-rule universe at 9 states and a 9x9 neighborhood.
 There is no missing-rule fallback. Cache size and computation still grow with
 the number of distinct neighborhoods actually encountered.
 
-When `ca.cycleUniform[ca.rule]` is true, an entirely state-s neighborhood
-produces `(s + 1) % simulation.states`, overriding the selected rule. This is
-available for all three rules; only majority enables it by default. For sum
-rules the override checks the actual histogram, not merely its sum.
+When `ca.cycleUniform` is true, an entirely state-s neighborhood produces
+`(s + 1) % simulation.states`, overriding the selected rule. This applies to
+all three rules. For sum rules the override checks the actual histogram, not
+merely its sum.
 
 ### Perlin movement
 
@@ -135,6 +133,10 @@ the orthographic camera fits the rotated block's on-screen outline tightly at
 any rotation (the vertical default matches the original `ortho(-420, 420, 840, -840)` framing).
 Changing view changes generation count and presentation, not shared-generation
 evolution.
+
+Colors are fixed by algorithm: CA draws state 0 as `rgba(0, 0, 0, 0.5)` and
+other states as opaque random RGB colors. PN draws state 0 as
+`rgba(0, 0, 0, 0.05)` and other states as random RGB colors with opacity `0.95`.
 
 Memory stores the **x=0 row**, not the entire plane. It uses a bounded ring,
 hashes followed by exact row comparisons, and reports matching past rows plus

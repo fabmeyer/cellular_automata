@@ -13,7 +13,7 @@ class CellularAutomaton {
         const { states } = this.settings.simulation;
         const { rule, cycleUniform, emptyStateProbability, neighborhoodSize } = this.settings.ca;
         const neighborCount = neighborhoodSize ** 2;
-        if (cycleUniform[rule]) {
+        if (cycleUniform) {
             const uniformState = counts.indexOf(neighborCount);
             if (uniformState !== -1) {
                 return (uniformState + 1) % states;
