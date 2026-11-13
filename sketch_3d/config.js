@@ -1,11 +1,11 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        factor: 2,
+        factor: 1,
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
-        cellSize: 4
+        cellSize: 4 // in pixels
     },
     simulation: {
         algorithm: "PN", // "CA", "PN"
@@ -19,9 +19,9 @@ const CONFIG = {
         cycleUniform: true
     },
     pn: {
-        forwardProbability: 0.99999,
-        noiseSpaceScale: 0.0005,
-        noiseTimeScale: 0.00001
+        forwardProbability: 0.99,
+        noiseSpaceScale: 0.0001,
+        noiseTimeScale: 0.0001
     },
     initial: {
         mode: "seed", // "random" plane or reusable "seed"
