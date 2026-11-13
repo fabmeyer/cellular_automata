@@ -1,14 +1,15 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        cols: 96,
-        rows: 96,
-        baseDepth: 192,
-        cellSize: 4 
+        factor: 2,
+        get cols() { return 96 * this.factor; },
+        get rows() { return 96 * this.factor; },
+        get baseDepth() { return 192 * this.factor; },
+        cellSize: 4
     },
     simulation: {
-        algorithm: "CA", // "CA", "PN"
-        get states() { return Math.min(3, CONFIG.initial.patternSize); },
+        algorithm: "PN", // "CA", "PN"
+        get states() { return Math.min(8, CONFIG.initial.patternSize); },
         timeInterval: 1
     },
     ca: {
@@ -18,9 +19,9 @@ const CONFIG = {
         cycleUniform: true
     },
     pn: {
-        forwardProbability: 0.1,
-        noiseSpaceScale: 0.01,
-        noiseTimeScale: 0.01
+        forwardProbability: 0.99999,
+        noiseSpaceScale: 0.0005,
+        noiseTimeScale: 0.00001
     },
     initial: {
         mode: "seed", // "random" plane or reusable "seed"
@@ -53,21 +54,30 @@ const CONFIG = {
     }
 };
 
+const INT32_MAX = 2147483647;
+const FLOAT32_MAX = 3.4028234663852886e38;
+
 function resolveConfig(config) {
     function requireValue(condition, message) {
         if (!condition) {
             throw new Error(message);
         }
     }
+    function int32(value) {
+        return Number.isInteger(value) && value >= -INT32_MAX - 1 && value <= INT32_MAX;
+    }
+    function float32(value) {
+        return Number.isFinite(value) && Math.abs(value) <= FLOAT32_MAX;
+    }
     function positiveInteger(value, name) {
-        requireValue(Number.isSafeInteger(value) && value > 0, `${name} must be a positive safe integer`);
+        requireValue(int32(value) && value > 0, `${name} must be a positive 32-bit integer`);
     }
     function positiveNumber(value, name) {
-        requireValue(Number.isFinite(value) && value > 0, `${name} must be a positive finite number`);
+        requireValue(float32(value) && value > 0, `${name} must be a positive finite 32-bit float`);
     }
     function probability(value, name) {
-        requireValue(Number.isFinite(value) && value >= 0 && value <= 1,
-            `${name} must be a finite number between 0 and 1`);
+        requireValue(float32(value) && value >= 0 && value <= 1,
+            `${name} must be a finite 32-bit float between 0 and 1`);
     }
     function choice(value, options, name) {
         requireValue(options.includes(value), `${name} must be one of: ${options.join(", ")}`);
@@ -79,10 +89,10 @@ function resolveConfig(config) {
     positiveInteger(grid.baseDepth, "grid.baseDepth");
     positiveNumber(grid.cellSize, "grid.cellSize");
     choice(simulation.algorithm, ["CA", "PN"], "simulation.algorithm");
-    requireValue(Number.isInteger(simulation.states) && simulation.states >= 2 && simulation.states <= 9,
+    requireValue(int32(simulation.states) && simulation.states >= 2 && simulation.states <= 9,
         "simulation.states must be an integer between 2 and 9");
-    requireValue(Number.isFinite(simulation.timeInterval) && simulation.timeInterval >= 0 &&
-        simulation.timeInterval <= 2147483647, "simulation.timeInterval must be between 0 and 2147483647 ms");
+    requireValue(float32(simulation.timeInterval) && simulation.timeInterval >= 0 &&
+        simulation.timeInterval <= INT32_MAX, "simulation.timeInterval must be between 0 and 2147483647 ms");
 
     choice(initial.mode, ["random", "seed"], "initial.mode");
     if (initial.mode === "seed") {
@@ -100,8 +110,8 @@ function resolveConfig(config) {
         choice(ca.rule, ["counts", "sum", "majority"], "ca.rule");
         positiveInteger(ca.neighborhoodSize, "ca.neighborhoodSize");
         requireValue(ca.neighborhoodSize % 2 === 1, "ca.neighborhoodSize must be odd");
-        requireValue(Number.isSafeInteger(ca.neighborhoodSize ** 2 * (simulation.states - 1)),
-            "ca.neighborhoodSize is too large for exact state sums");
+        requireValue(int32(ca.neighborhoodSize ** 2 * (simulation.states - 1)),
+            "ca.neighborhoodSize is too large for signed 32-bit state sums");
         requireValue(typeof ca.cycleUniform === "boolean", "ca.cycleUniform must be boolean");
         if (ca.rule !== "majority") {
             probability(ca.emptyStateProbability, "ca.emptyStateProbability");
@@ -129,10 +139,10 @@ function resolveConfig(config) {
         "view canvasScale must contain two numbers");
     preset.canvasScale.forEach(value => positiveNumber(value, "view canvasScale"));
     requireValue(Array.isArray(preset.rotation) && preset.rotation.length === 3 &&
-        preset.rotation.every(Number.isFinite), "view rotation must contain three finite multiples of PI");
+        preset.rotation.every(float32), "view rotation must contain three finite float32 multiples of PI");
     positiveNumber(view.cameraPadding, "view.cameraPadding");
     requireValue(view.cameraPadding >= 1, "view.cameraPadding must be at least 1");
-    requireValue(Number.isFinite(view.background) && view.background >= 0 && view.background <= 255,
+    requireValue(float32(view.background) && view.background >= 0 && view.background <= 255,
         "view.background must be between 0 and 255");
     const depth = grid.baseDepth * preset.depthMultiplier;
     positiveInteger(depth, "effective depth");
@@ -143,7 +153,7 @@ function resolveConfig(config) {
     const canvasHeight = Math.ceil(grid.rows * grid.cellSize * preset.canvasScale[1]);
     positiveInteger(canvasWidth, "canvas width");
     positiveInteger(canvasHeight, "canvas height");
-    requireValue(Number.isFinite(Math.hypot(grid.cols, grid.rows, depth) * grid.cellSize * view.cameraPadding),
-        "grid and view dimensions must produce finite camera bounds");
+    requireValue(float32(Math.hypot(grid.cols, grid.rows, depth) * grid.cellSize * view.cameraPadding),
+        "grid and view dimensions must produce finite float32 camera bounds");
     return { ...config, depth, preset, canvasWidth, canvasHeight, memoryCapacity, matchRunLength };
 }

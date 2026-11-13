@@ -661,6 +661,41 @@ test('default vertical view keeps the original ortho(-420, 420, 840, -840) zoom'
     assert.ok(Math.abs(right - 420) / 420 < 0.01, `half width ${right}`);
 });
 
+test('configuration accepts int32 and float32 boundaries and rejects out-of-range values before allocation', () => {
+    const { classes, defaults } = createHarness();
+    const resolve = overrides => {
+        const config = structuredClone(defaults);
+        for (const [section, values] of Object.entries(overrides)) {
+            config[section] = { ...config[section], ...values };
+        }
+        return classes.resolveConfig(config);
+    };
+    const int32Max = 2147483647;
+    const float32Max = 3.4028234663852886e38;
+
+    const settings = resolve({
+        grid: { cols: int32Max, baseDepth: int32Max, cellSize: 1e-10 },
+        simulation: { timeInterval: int32Max },
+        pn: { noiseSpaceScale: float32Max }
+    });
+    assert.equal(settings.depth, int32Max);
+    assert.equal(settings.grid.cols, int32Max);
+    assert.equal(settings.simulation.timeInterval, int32Max);
+    assert.equal(settings.pn.noiseSpaceScale, float32Max);
+
+    assert.throws(() => resolve({ grid: { cols: int32Max + 1 } }), /grid.cols/);
+    assert.throws(() => resolve({ simulation: { timeInterval: int32Max + 1 } }), /timeInterval/);
+    assert.throws(() => resolve({ pn: { noiseSpaceScale: float32Max * 2 } }), /noiseSpaceScale/);
+    assert.throws(() => resolve({ grid: { cellSize: float32Max * 2 } }), /cellSize/);
+
+    assert.doesNotThrow(() => resolve({
+        simulation: { algorithm: 'CA' }, pn: { noiseSpaceScale: float32Max * 2 }
+    }));
+    assert.doesNotThrow(() => resolve({
+        simulation: { algorithm: 'PN' }, ca: { neighborhoodSize: int32Max + 1 }
+    }));
+});
+
 test('invalid active options fail before allocation; inactive settings are ignored', () => {
     for (const [overrides, message] of [
         [{ grid: { cols: 0 } }, /grid.cols/],

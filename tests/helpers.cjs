@@ -13,7 +13,8 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
     for (const { file, source } of scripts) {
         vm.runInContext(source, context, { filename: file });
     }
-    const classes = vm.runInContext('({ Simulation, GridRenderer, RowMemory, wrapIndex, d4Representative })', context);
+    const classes = vm.runInContext('({ Simulation, GridRenderer, RowMemory, wrapIndex, d4Representative, resolveConfig })',
+        context);
     const defaults = structuredClone(vm.runInContext('CONFIG', context));
     const config = {
         ...defaults,

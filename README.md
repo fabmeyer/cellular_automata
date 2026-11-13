@@ -41,6 +41,15 @@ throw descriptive errors in the browser console; they are not silently replaced.
 | `view.cameraPadding` | Margin around the tightly fitted block, at least 1; larger zooms out | `1.05` |
 | `view.background` | Grayscale background, 0 through 255 | `10` |
 
+Active integer settings and derived integer dimensions must fit signed 32-bit
+range (`-2147483648` through `2147483647`). Active floating-point settings must
+be finite and within the float32 magnitude limit (about `3.4e38`). These checks
+do not round calculations; JavaScript continues to calculate using `Number`
+precision. Existing per-setting limits still apply, such as states 2 through 9,
+probabilities from 0 to 1, and background values from 0 to 255. Values within
+these numeric ranges can still exceed available browser memory or rendering
+capacity.
+
 For example, select majority-voting CA by changing `simulation.algorithm` to
 `"CA"` and `ca.rule` to `"majority"`. To place a symmetric seed in the center,
 set `initial.mode = "seed"`, `initial.symmetry = "D4"`, and
