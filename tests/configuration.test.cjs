@@ -224,6 +224,157 @@ test('overlapping corner seeds have deterministic last-stamp-wins behavior', () 
         [[0, 0, 1], [0, 0, 1], [2, 2, 3]]);
 });
 
+test('length-8 seeds expand 16 coarse states into 2x2 blocks and preserve D4 symmetry', () => {
+    for (const [symmetry, coarse] of [
+        ['plain', [[0, 1, 2, 3], [4, 5, 6, 7], [8, 0, 1, 2], [3, 4, 5, 6]]],
+        ['D4', [[0, 1, 1, 0], [1, 5, 5, 1], [1, 5, 5, 1], [0, 1, 1, 0]]]
+    ]) {
+        let draws = 0;
+        const { subject } = createHarness({
+            simulation: { states: 9 },
+            initial: { patternSize: 8, resolutionFactor: 2, symmetry, placement: 'tiled' }
+        }, { random: () => (draws++ % 9 + 0.5) / 9 });
+        subject.initialize();
+        const expected = coarse.flatMap(column => {
+            const expanded = column.flatMap(state => [state, state]);
+            return [expanded, expanded];
+        });
+        assert.deepEqual(layerStates(subject.grid, 0), expected, symmetry);
+        assert.equal(draws, 16, symmetry);
+        if (symmetry === 'D4') {
+            for (let x = 0; x < 8; x++) {
+                for (let y = 0; y < 8; y++) {
+                    for (const [i, j] of [[y, 7 - x], [7 - x, 7 - y], [7 - y, x],
+                        [x, 7 - y], [7 - x, y], [y, x], [7 - y, 7 - x]]) {
+                        assert.equal(subject.grid.get(x, y, 0), subject.grid.get(i, j, 0));
+                    }
+                }
+            }
+        }
+    }
+});
+
+test('coarse seeds retain tile anchors, corner surroundings, and last-stamp-wins overlaps', () => {
+    for (const initial of initializers.filter(options => options.mode === 'seed')) {
+        for (const [cols, rows] of [[15, 13], [7, 7]]) {
+            let draws = 0;
+            const { subject } = createHarness({
+                grid: { cols, rows }, simulation: { states: 9 },
+                initial: { ...initial, patternSize: 6, resolutionFactor: 2 }
+            }, { random: () => (draws++ + 0.5) / 9 });
+            subject.initialize();
+            const coarse = initial.symmetry === 'D4'
+                ? [[0, 1, 0], [1, 4, 1], [0, 1, 0]] : [[0, 1, 2], [3, 4, 5], [6, 7, 8]];
+            const tile = coarse.flatMap(column => {
+                const expanded = column.flatMap(state => [state, state]);
+                return [expanded, expanded];
+            });
+            const origins = initial.placement === 'corners'
+                ? [[0, 0], [cols - 6, 0], [0, rows - 6], [cols - 6, rows - 6]]
+                : initial.placement === 'center'
+                    ? [[Math.floor((cols - 6) / 2), Math.floor((rows - 6) / 2)]] : [[0, 0]];
+            const [anchorX, anchorY] = origins[0];
+            const expected = Array.from({ length: cols }, (_, x) =>
+                Array.from({ length: rows }, (_, y) =>
+                    initial.placement === 'corners' && !initial.loopPattern ? 0
+                        : tile[((x - anchorX) % 6 + 6) % 6][((y - anchorY) % 6 + 6) % 6]));
+            for (const [originX, originY] of origins) {
+                for (let x = 0; x < 6; x++) {
+                    for (let y = 0; y < 6; y++) {
+                        expected[originX + x][originY + y] = tile[x][y];
+                    }
+                }
+            }
+            const label = JSON.stringify({ initial, cols, rows });
+            assert.deepEqual(layerStates(subject.grid, 0), expected, label);
+            assert.equal(draws, 9, label);
+        }
+    }
+});
+
+test('random initialization draws once per block, clipping rectangular edges and oversized factors', () => {
+    for (const [resolutionFactor, expected, expectedDraws] of [
+        [2, [[0, 0, 1], [0, 0, 1], [2, 2, 3], [2, 2, 3], [4, 4, 5]], 6],
+        [2147483647, [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], 1]
+    ]) {
+        let draws = 0;
+        const { subject } = createHarness({
+            grid: { cols: 5, rows: 3 }, simulation: { states: 9 },
+            initial: { mode: 'random', resolutionFactor, patternSize: -1,
+                symmetry: 'bad', placement: 'bad', loopPattern: 'bad' }
+        }, { random: () => (draws++ + 0.5) / 9 });
+        subject.initialize();
+        assert.deepEqual(layerStates(subject.grid, 0), expected);
+        assert.equal(draws, expectedDraws);
+    }
+});
+
+test('factor 1 preserves x-major random draws and existing plain/D4 seed states', () => {
+    for (const [initial, expected, expectedDraws] of [
+        [{ mode: 'random' }, [[0, 1, 2], [3, 4, 5], [6, 7, 8]], 9],
+        [{ mode: 'seed', symmetry: 'plain', patternSize: 2, placement: 'tiled' },
+            [[0, 1, 0], [2, 3, 2], [0, 1, 0]], 4],
+        [{ mode: 'seed', symmetry: 'D4', patternSize: 3, placement: 'tiled' },
+            [[0, 1, 0], [1, 4, 1], [0, 1, 0]], 9]
+    ]) {
+        let draws = 0;
+        const { subject } = createHarness({
+            grid: { cols: 3, rows: 3 }, simulation: { states: 9 }, initial
+        }, { random: () => (draws++ + 0.5) / 9 });
+        subject.initialize();
+        assert.deepEqual(layerStates(subject.grid, 0), expected);
+        assert.equal(draws, expectedDraws);
+    }
+});
+
+test('initial resolution factors reject invalid integers and nondivisible seed lengths', () => {
+    for (const mode of ['seed', 'random']) {
+        for (const resolutionFactor of [0, -1, 1.5, NaN, Infinity, 2147483648, '2', undefined]) {
+            assert.throws(() => createHarness({ initial: { mode, resolutionFactor } }),
+                /initial.resolutionFactor must be a positive 32-bit integer/);
+        }
+    }
+    for (const resolutionFactor of [3, 9]) {
+        assert.throws(() => createHarness({ initial: { patternSize: 8, resolutionFactor } }),
+            /initial.resolutionFactor must divide initial.patternSize exactly/);
+    }
+    const { subject } = createHarness({
+        initial: { patternSize: 8, resolutionFactor: 8 }
+    }, { random: () => 0.75 });
+    subject.initialize();
+    assert.ok(subject.grid.layer(0).every(state => state === 6));
+});
+
+test('CA and PN evolve coarse initial blocks at full cell resolution', () => {
+    for (const algorithm of ['CA', 'PN']) {
+        const overrides = {
+            simulation: { algorithm, states: 3 },
+            initial: { patternSize: 8, symmetry: 'plain', placement: 'tiled' },
+            ca: { rule: 'majority', neighborhoodSize: 3, cycleUniform: true },
+            pn: { forwardProbability: 1, noiseSpaceScale: 1 },
+            memory: { enabled: false }
+        };
+        const noise = x => x % 2 === 0 ? 0.5 : 0.7;
+        const { subject: coarse } = createHarness({
+            ...overrides, initial: { ...overrides.initial, resolutionFactor: 4 }
+        }, { random: seededRandom(7), noise });
+        const { subject: baseline } = createHarness(overrides, { random: seededRandom(7), noise });
+        coarse.initialize();
+        baseline.initialize();
+        baseline.grid.layer(0).set(coarse.grid.layer(0));
+        baseline.algorithm.initialize(baseline.grid);
+        for (let z = 1; z <= 2; z++) {
+            coarse.step();
+            baseline.step();
+            assert.deepEqual(layerStates(coarse.grid, z), layerStates(baseline.grid, z), algorithm);
+        }
+        assert.ok(layerStates(coarse.grid, 1).some((column, x) =>
+            column.some((state, y) =>
+                state !== coarse.grid.get(Math.floor(x / 4) * 4, Math.floor(y / 4) * 4, 1))),
+        `${algorithm} must not force later generations into uniform initial blocks`);
+    }
+});
+
 test('majority handles unique winners, both tie cases, and uniform cycling for every state', () => {
     const { subject } = createHarness({
         simulation: { algorithm: 'CA', states: 4 },

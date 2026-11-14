@@ -9,20 +9,36 @@ function d4Representative(i, j, size) {
 
 function initializeGrid(grid, settings, random) {
     const { cols, rows } = settings.grid;
-    const { mode, patternSize, symmetry, placement, loopPattern } = settings.initial;
+    const { mode, patternSize, resolutionFactor, symmetry, placement, loopPattern } = settings.initial;
     const randomState = () => Math.floor(random() * settings.simulation.states);
-    for (let x = 0; x < cols; x++) {
-        for (let y = 0; y < rows; y++) {
-            grid.set(x, y, 0, mode === "random" ? randomState() : 0);
-        }
-    }
     if (mode === "random") {
+        for (let x = 0; x < cols; x += resolutionFactor) {
+            for (let y = 0; y < rows; y += resolutionFactor) {
+                const state = randomState();
+                const endX = Math.min(x + resolutionFactor, cols);
+                const endY = Math.min(y + resolutionFactor, rows);
+                for (let i = x; i < endX; i++) {
+                    for (let j = y; j < endY; j++) {
+                        grid.set(i, j, 0, state);
+                    }
+                }
+            }
+        }
         return;
     }
-    const seed = Array.from({ length: patternSize }, () =>
-        Array.from({ length: patternSize }, randomState));
+    for (let x = 0; x < cols; x++) {
+        for (let y = 0; y < rows; y++) {
+            grid.set(x, y, 0, 0);
+        }
+    }
+    const coarseSize = patternSize / resolutionFactor;
+    const seed = Array.from({ length: coarseSize }, () =>
+        Array.from({ length: coarseSize }, randomState));
     function seedState(x, y) {
-        const [i, j] = symmetry === "D4" ? d4Representative(x, y, patternSize) : [x, y];
+        const coarseX = Math.floor(x / resolutionFactor);
+        const coarseY = Math.floor(y / resolutionFactor);
+        const [i, j] = symmetry === "D4"
+            ? d4Representative(coarseX, coarseY, coarseSize) : [coarseX, coarseY];
         return seed[i][j];
     }
     const origins = {

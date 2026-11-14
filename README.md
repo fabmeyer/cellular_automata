@@ -77,6 +77,7 @@ for memory findings and observability details.
 | `pn.trajectory.parameterNoise.channels` | `"separate"` parameter fields or one `"shared"` sample for all ranges | `"separate"` |
 | `initial.mode` | `"random"` plane or reusable `"seed"` | `"seed"` |
 | `initial.patternSize` | Positive integer seed side length, fitting both plane dimensions | `16` |
+| `initial.resolutionFactor` | Positive integer same-state block side length in X and Y; must divide `patternSize` exactly in seed mode | `1` |
 | `initial.symmetry` | `"plain"` or `"D4"` | `"plain"` |
 | `initial.placement` | `"tiled"`, `"center"`, `"corners"` | `"tiled"` |
 | `initial.loopPattern` | Corners only: repeat the seed across the surroundings instead of leaving them empty (state 0); center and tiled always loop | `true` |
@@ -112,6 +113,18 @@ For example, select majority-voting CA by changing `simulation.algorithm` to
 `"CA"` and `ca.rule` to `"majority"`. To place a symmetric seed in the center,
 set `initial.mode = "seed"`, `initial.symmetry = "D4"`, and
 `initial.placement = "center"`.
+
+For lower-resolution initial patterns, set `initial.resolutionFactor = 2`.
+With `initial.patternSize = 8`, this generates a 4x4 coarse seed and expands each
+state into a 2x2 block: positions 0/1 share a state, 2/3 share a state, and so on
+along both axes. The final seed remains 8x8 cells. D4 symmetry is applied to the
+coarse seed before expansion, preserving exact symmetry. Tiling, placement, and
+looping retain their existing behavior, with blocks aligned to each placed seed.
+Seed mode rejects factors that do not divide the pattern size exactly. Random
+mode also uses same-state blocks, clipping partial blocks at the grid edges;
+a factor larger than the plane produces one block. Only initialization is
+coarsened: subsequent CA/PN generations still operate at full cell resolution,
+so the blocks need not remain uniform. Factor 1 preserves existing behavior.
 
 The default is the active sketch's PN/plain-tiled/vertical configuration, not
 the corner placement described by older versions of this README.

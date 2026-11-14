@@ -45,8 +45,9 @@ const CONFIG = {
         }
     },
     initial: {
-        mode: "seed", // "random" plane or reusable "seed"
+        mode: "seed", // "random", "seed"
         patternSize: 32,
+        resolutionFactor: 1, // same-state block side length; must divide patternSize in seed mode
         symmetry: "D4", // "plain", "D4"
         placement: "tiled", // "tiled", "center", "corners"
         loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
@@ -127,10 +128,13 @@ function resolveConfig(config) {
         simulation.timeInterval <= INT32_MAX, "simulation.timeInterval must be between 0 and 2147483647 ms");
 
     choice(initial.mode, ["random", "seed"], "initial.mode");
+    positiveInteger(initial.resolutionFactor, "initial.resolutionFactor");
     if (initial.mode === "seed") {
         positiveInteger(initial.patternSize, "initial.patternSize");
         requireValue(initial.patternSize <= grid.cols && initial.patternSize <= grid.rows,
             "initial.patternSize must fit within both grid dimensions");
+        requireValue(initial.patternSize % initial.resolutionFactor === 0,
+            "initial.resolutionFactor must divide initial.patternSize exactly");
         choice(initial.symmetry, ["plain", "D4"], "initial.symmetry");
         choice(initial.placement, ["tiled", "center", "corners"], "initial.placement");
         if (initial.placement === "corners") {
