@@ -30,8 +30,8 @@ const CONFIG = {
         noiseTimeScale: 0.02,
         trajectory: {
             slope: [0.0, 0.0], // cells per layer
-            bend: [-0.0015, 0.0015], // change in slope per layer
-            amplitude: [16, 128],
+            bend: [-0.003, 0.003], // change in slope per layer
+            amplitude: [8, 256],
             wavelength: [16, 2048],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {

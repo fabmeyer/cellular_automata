@@ -26,8 +26,8 @@ class GridRenderer {
         }
         const radius = Math.hypot(grid.cols, grid.rows, depth) * grid.cellSize / 2;
         const cameraDistance = radius + grid.cellSize;
-        p.setAttributes("antialias", view.antialias);
         p.createCanvas(canvasWidth, canvasHeight, p.WEBGL);
+        p.setAttributes("antialias", view.antialias);
         p.camera(0, 0, cameraDistance, 0, 0, 0, 0, 1, 0);
         p.ortho(-halfWidth, halfWidth, halfHeight, -halfHeight, -8 * cameraDistance, 8 * cameraDistance);
         p.background(view.background);

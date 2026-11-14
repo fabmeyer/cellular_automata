@@ -800,7 +800,7 @@ test('default vertical view keeps the original ortho(-420, 420, 840, -840) zoom'
     assert.ok(Math.abs(right - 420) / 420 < 0.01, `half width ${right}`);
 });
 
-test('antialias setting is applied before the WebGL canvas is created', () => {
+test('antialias setting is applied after creating the WebGL canvas', () => {
     for (const antialias of [true, false]) {
         const { subject, classes } = createHarness({ view: { antialias } });
         const { drawing, calls } = drawingStub();
@@ -808,7 +808,7 @@ test('antialias setting is applied before the WebGL canvas is created', () => {
         const setAttributesIndex = calls.findIndex(([name]) => name === 'setAttributes');
         const createCanvasIndex = calls.findIndex(([name]) => name === 'createCanvas');
         assert.deepEqual(calls[setAttributesIndex], ['setAttributes', 'antialias', antialias]);
-        assert.ok(setAttributesIndex < createCanvasIndex);
+        assert.ok(createCanvasIndex < setAttributesIndex);
     }
 });
 

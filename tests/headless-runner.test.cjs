@@ -49,6 +49,49 @@ test('Chromium resource errors without console arguments are still reported', as
     assert.deepEqual(messages, [['[Chromium]', 'Failed to load resource']]);
 });
 
+test('GridRenderer applies antialiasing to the p5 WebGL context', async t => {
+    const server = createLocalServer();
+    t.after(() => new Promise((resolve, reject) =>
+        server.close(error => error ? reject(error) : resolve())));
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const origin = `http://127.0.0.1:${server.address().port}`;
+
+    const browser = await puppeteer.launch({ headless: true });
+    t.after(() => browser.close());
+    for (const antialias of [true, false]) {
+        const page = await browser.newPage();
+        await page.setContent(`
+            <script src="${origin}/js/p5.js"></script>
+            <script src="${origin}/sketch_3d/config.js"></script>
+            <script src="${origin}/sketch_3d/renderer.js"></script>
+            <script>
+                CONFIG.grid.factor = 1;
+                CONFIG.view.orientation = 'sideways';
+                CONFIG.view.presets.sideways.canvasScale = [1, 1];
+                CONFIG.view.antialias = ${antialias};
+                window.setupResult = null;
+                const settings = resolveConfig(CONFIG);
+                new p5(p => {
+                    p.setup = () => {
+                        try {
+                            new GridRenderer(settings, p).setup();
+                            window.setupResult = {
+                                antialias: p._renderer.GL.getContextAttributes().antialias
+                            };
+                        } catch (error) {
+                            window.setupResult = { error: error.message };
+                        }
+                    };
+                });
+            </script>
+        `);
+        await page.waitForFunction(() => window.setupResult !== null);
+        assert.deepEqual(await page.evaluate(() => window.setupResult), { antialias });
+        await page.close();
+    }
+});
+
 test('canvas screenshots retain both edges when the canvas exceeds the browser viewport', async t => {
     const browser = await puppeteer.launch({ headless: true });
     t.after(() => browser.close());
