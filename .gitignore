@@ -3,3 +3,5 @@
 .playwright-mcp
 .mcp.json
 .vscode/mcp.json
+node_modules
+output/

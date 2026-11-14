@@ -59,23 +59,65 @@ class Simulation {
 let simulation;
 let renderer;
 
+globalThis.simulationDone = false;
+globalThis.simulationError = null;
+let nextProgressPercent = 10;
+
+function reportSimulationProgress() {
+    if (typeof globalThis.onSimulationProgress !== "function") {
+        return;
+    }
+    const completed = simulation.nextZ;
+    const total = simulation.settings.simulation.numGenerations;
+    const percent = Math.floor(completed * 100 / total);
+    if (completed !== 1 && percent < nextProgressPercent) {
+        return;
+    }
+    nextProgressPercent = (Math.floor(percent / 10) + 1) * 10;
+    const memory = globalThis.performance?.memory;
+    globalThis.onSimulationProgress({
+        percent, completed, total,
+        heap: memory ? {
+            usedBytes: memory.usedJSHeapSize,
+            allocatedBytes: memory.totalJSHeapSize,
+            limitBytes: memory.jsHeapSizeLimit
+        } : null
+    });
+}
+
 function setup() {
-    simulation = new Simulation(CONFIG);
-    renderer = new GridRenderer(simulation.settings);
-    renderer.setup();
-    simulation.initialize();
-    renderer.drawLayer(simulation.grid, 0);
-    if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
-        setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
+    try {
+        simulation = new Simulation(CONFIG);
+        renderer = new GridRenderer(simulation.settings);
+        renderer.setup();
+        simulation.initialize();
+        renderer.drawLayer(simulation.grid, 0);
+        reportSimulationProgress();
+        if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
+            setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
+        } else {
+            globalThis.simulationDone = true;
+        }
+    } catch (error) {
+        globalThis.simulationError = error instanceof Error ? error.stack : String(error);
+        throw error;
     }
 }
 
 function nextFrame() {
-    const z = simulation.step();
-    if (z !== null) {
-        renderer.drawLayer(simulation.grid, z);
-    }
-    if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
-        setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
+    try {
+        const z = simulation.step();
+        if (z !== null) {
+            renderer.drawLayer(simulation.grid, z);
+            reportSimulationProgress();
+        }
+        if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
+            setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
+        } else {
+            globalThis.simulationDone = true;
+        }
+    } catch (error) {
+        globalThis.simulationError = error instanceof Error ? error.stack : String(error);
+        throw error;
     }
 }

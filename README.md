@@ -12,6 +12,28 @@ There are no live controls. `setup()` validates active settings before allocatin
 the grid, creating the canvas, or starting the simulation. Invalid active values
 throw descriptive errors in the browser console; they are not silently replaced.
 
+### Headless run and PNG export
+
+The WebGL sketch can also run unattended in Puppeteer's headless Chromium and
+save its final canvas as a PNG:
+
+```bash
+npm install
+npm run simulate:headless
+npm run simulate:headless -- --output ./images/result.png
+```
+
+The default output is a timestamped PNG under `output/`. A supplied output path
+is resolved from the current directory; existing files are never overwritten.
+The command serves the project locally, uses the current
+`sketch_3d/config.js`, waits for every configured generation, saves the canvas
+(not the page), and exits. Headless mode removes the visible browser window but
+still runs Chromium. Progress updates show completed layers, elapsed time, and
+Chromium's used/allocated/limit JavaScript heap in MiB at roughly every 10%.
+Node's memory flags do not change Chromium's limit. Large runs may still fail
+from memory or WebGL resource limits. See [the headless guide](./docs/HEADLESS.md)
+for memory findings and observability details.
+
 ## Central configuration
 
 | Setting | Meaning / options | Default |

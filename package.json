@@ -1,0 +1,31 @@
+{
+  "name": "cellular_automata",
+  "version": "1.0.0",
+  "description": "A p5.js visualization of successive 2D generations stacked into a 3D volume.",
+  "main": "sketch.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "simulate:headless": "node scripts/run-headless.cjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fabmeyer/cellular_automata.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/fabmeyer/cellular_automata/issues"
+  },
+  "homepage": "https://github.com/fabmeyer/cellular_automata#readme",
+  "dependencies": {
+    "canvas": "^3.2.3",
+    "p5": "^2.4.0",
+    "puppeteer": "^25.17.0"
+  }
+}

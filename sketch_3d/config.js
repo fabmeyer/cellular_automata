@@ -11,7 +11,7 @@ const CONFIG = {
         algorithm: "PN", // "CA", "PN"
         get states() { return Math.min(9, CONFIG.initial.patternSize); },
         get numGenerations() {
-            return 1.5 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
+            return 1.75 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
         }, // includes the initial layer
         timeInterval: 1
     },
@@ -25,17 +25,17 @@ const CONFIG = {
         mode: "trajectory", // "legacy", "trajectory"
         boundary: "grow", // "wrap", "grow"
         maxCellsPerAxisPerLayer: 100,
-        forwardProbability: 0.99,
-        noiseSpaceScale: 0.005,
-        noiseTimeScale: 0.01,
+        forwardProbability: 1.0,
+        noiseSpaceScale: 0.0125,
+        noiseTimeScale: 0.05,
         trajectory: {
-            slope: [0.001, 0.002], // cells per layer
-            bend: [-0.001, 0.001], // change in slope per layer
-            amplitude: [8, 128],
-            wavelength: [32, 512],
-            phase: [0, 2 * Math.PI], // radians
+            slope: [0.0, 0.002], // cells per layer
+            bend: [-0.002, 0.002], // change in slope per layer
+            amplitude: [32, 512],
+            wavelength: [64, 2048],
+            phase: [Math.PI, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.005,
+                spaceScale: 0.0125,
                 channels: "shared" // "separate", "shared"
             }
         }
