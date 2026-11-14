@@ -1,7 +1,7 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        factor: 2,
+        factor: 4,
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
@@ -24,18 +24,18 @@ const CONFIG = {
     pn: {
         mode: "trajectory", // "legacy", "trajectory"
         boundary: "grow", // "wrap", "grow"
-        maxCellsPerAxisPerLayer: 100,
+        maxCellsPerAxisPerLayer: 200,
         forwardProbability: 1.0,
-        noiseSpaceScale: 0.01,
-        noiseTimeScale: 0.5,
+        noiseSpaceScale: 0.002,
+        noiseTimeScale: 0.02,
         trajectory: {
             slope: [0.0, 0.0], // cells per layer
             bend: [-0.0015, 0.0015], // change in slope per layer
-            amplitude: [1, 128],
-            wavelength: [16, 1024],
+            amplitude: [16, 128],
+            wavelength: [16, 2048],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.01,
+                spaceScale: 0.002,
                 channels: "shared" // "separate", "shared"
             }
         }
@@ -68,6 +68,7 @@ const CONFIG = {
         },
         cameraPadding: 1.05, // margin around the tightly fitted block; larger zooms out
         zoom: 1.0, // values above 1 zoom in; values below 1 zoom out
+        antialias: true,
         background: 10
     }
 };
@@ -168,6 +169,7 @@ function resolveConfig(config) {
     positiveNumber(view.cameraPadding, "view.cameraPadding");
     requireValue(view.cameraPadding >= 1, "view.cameraPadding must be at least 1");
     positiveNumber(view.zoom, "view.zoom");
+    requireValue(typeof view.antialias === "boolean", "view.antialias must be boolean");
     requireValue(float32(view.background) && view.background >= 0 && view.background <= 255,
         "view.background must be between 0 and 255");
     const depth = grid.baseDepth * preset.depthMultiplier;

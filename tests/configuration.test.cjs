@@ -800,6 +800,18 @@ test('default vertical view keeps the original ortho(-420, 420, 840, -840) zoom'
     assert.ok(Math.abs(right - 420) / 420 < 0.01, `half width ${right}`);
 });
 
+test('antialias setting is applied before the WebGL canvas is created', () => {
+    for (const antialias of [true, false]) {
+        const { subject, classes } = createHarness({ view: { antialias } });
+        const { drawing, calls } = drawingStub();
+        new classes.GridRenderer(subject.settings, drawing).setup();
+        const setAttributesIndex = calls.findIndex(([name]) => name === 'setAttributes');
+        const createCanvasIndex = calls.findIndex(([name]) => name === 'createCanvas');
+        assert.deepEqual(calls[setAttributesIndex], ['setAttributes', 'antialias', antialias]);
+        assert.ok(setAttributesIndex < createCanvasIndex);
+    }
+});
+
 test('zoom scales orthographic framing without changing the camera or depth clipping', () => {
     for (const orientation of ['sideways', 'vertical']) {
         const setup = zoom => {
@@ -898,6 +910,7 @@ test('invalid active options fail before allocation; inactive settings are ignor
         [{ initial: { placement: 'bad' } }, /initial.placement/],
         [{ initial: { placement: 'corners', loopPattern: 'yes' } }, /initial.loopPattern/],
         [{ view: { orientation: 'bad' } }, /view.orientation/],
+        [{ view: { antialias: 'yes' } }, /view.antialias/],
         [{ memory: { enabled: 'yes' } }, /memory.enabled/],
         [{ memory: { enabled: true, capacityMultiplier: 0 } }, /capacityMultiplier/],
         [{ memory: { enabled: true, matchRunFraction: 0 } }, /matchRunFraction/],

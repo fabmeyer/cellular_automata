@@ -59,7 +59,7 @@ function seededRandom(seed = 123) {
 function drawingStub() {
     const calls = [];
     const drawing = { WEBGL: 'WEBGL', height: 0 };
-    for (const name of ['createCanvas', 'camera', 'ortho', 'background', 'noLoop', 'noStroke', 'noLights',
+    for (const name of ['setAttributes', 'createCanvas', 'camera', 'ortho', 'background', 'noLoop', 'noStroke', 'noLights',
         'ambientLight', 'push', 'pop', 'rotateX', 'rotateY', 'rotateZ', 'fill', 'translate', 'box']) {
         drawing[name] = (...args) => {
             calls.push([name, ...args]);
