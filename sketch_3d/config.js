@@ -31,8 +31,8 @@ const CONFIG = {
         trajectory: {
             slope: [0.0, 0.015], // cells per layer
             bend: [-0.003, 0.003], // change in slope per layer
-            amplitude: [32, 256],
-            wavelength: [128, 1024],
+            amplitude: [32, 128],
+            wavelength: [16, 1024],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
                 spaceScale: 0.01,

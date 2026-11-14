@@ -119,6 +119,17 @@ transparency sort. Grown PN cells require an additional packed coordinate
 buffer/batch, in existing order. A layer's CPU state can be discarded after it
 has been drawn into a persistent accumulation target.
 
+**Status:** option 1 is implemented in `sketch_3d/renderer.js`.
+- Interior cells are drawn with one `model(cube, cols * rows)` call per layer,
+  using a state texture and a palette uniform.
+- Grown PN outside cells still use the immediate path.
+- If the WebGL2 instancing APIs are missing (test stubs, WebGL1), the renderer
+  falls back to the immediate path.
+- Verified on p5 2.4.0 against the fallback, across every layer:
+  - PN 192x192: **253.9 -> 4.7 ms/layer, 54x**.
+  - Pixel differences were at most 0.08% of channels, on cube edges only.
+  - Non-square grids (23x31 PN, 31x17 CA) also matched.
+
 **Compact history:** the reference-release prototype still leaves preallocated
 history slots in place; achieving the 672x dense-state saving requires a real
 ring-buffer redesign, not merely assigning null. For tiling, camera changes,

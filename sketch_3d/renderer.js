@@ -31,6 +31,56 @@ class GridRenderer {
         p.ortho(-halfWidth, halfWidth, halfHeight, -halfHeight, -8 * cameraDistance, 8 * cameraDistance);
         p.background(view.background);
         p.noLoop();
+        this.instancing = this.createInstancing();
+    }
+
+    // Draws a whole layer with one instanced call; returns null when the context cannot (e.g. test stubs, WebGL1).
+    createInstancing() {
+        const p = this.drawing;
+        if (![p.createShader, p.buildGeometry, p.model, p.createImage].every(fn => typeof fn === "function") ||
+            p.webglVersion !== p.WEBGL2) {
+            return null;
+        }
+        const { cols, rows, cellSize } = this.settings.grid;
+        const states = p.createImage(rows, cols);
+        states.loadPixels();
+        for (let i = 3; i < states.pixels.length; i += 4) {
+            states.pixels[i] = 255;
+        }
+        const palette = this.colors.flatMap(color => {
+            const [r, g, b, a = 1] = color.match(/[\d.]+/g).map(Number);
+            return [r / 255, g / 255, b / 255, a];
+        });
+        while (palette.length < 36) {
+            palette.push(0);
+        }
+        const shader = p.createShader(`#version 300 es
+            precision highp float;
+            precision highp int;
+            in vec3 aPosition;
+            uniform mat4 uModelViewMatrix;
+            uniform mat4 uProjectionMatrix;
+            uniform sampler2D states;
+            uniform int rows;
+            uniform vec2 gridSize;
+            uniform float cellSize;
+            uniform float layerZ;
+            uniform vec4 palette[9];
+            flat out vec4 cellColor;
+            void main() {
+                int x = gl_InstanceID / rows;
+                int y = gl_InstanceID - x * rows;
+                int state = int(round(texelFetch(states, ivec2(y, x), 0).r * 255.0));
+                cellColor = palette[state];
+                vec3 offset = vec3((vec2(x, y) - gridSize / 2.0 + 0.5) * cellSize, layerZ);
+                gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition + offset, 1.0);
+            }`, `#version 300 es
+            precision highp float;
+            flat in vec4 cellColor;
+            out vec4 outColor;
+            void main() { outColor = vec4(cellColor.rgb * cellColor.a, cellColor.a); }`);
+        const cube = p.buildGeometry(() => p.box(cellSize, cellSize, cellSize));
+        return { states, palette, shader, cube };
     }
 
     // Mirrors drawLayer: rotateX, rotateY, rotateZ applied to the model, so vertices see Rx(Ry(Rz(v))).
@@ -64,16 +114,35 @@ class GridRenderer {
         p.rotateX(Math.PI * rx);
         p.rotateY(Math.PI * ry);
         p.rotateZ(Math.PI * rz);
-        for (let x = 0; x < cols; x++) {
-            for (let y = 0; y < rows; y++) {
-                const cell = grid[x][y][zIndex];
-                p.push();
-                p.fill(this.colors[cell.state]);
-                p.translate(cell.x - cols * cellSize / 2 + cellSize / 2,
-                    cell.y - rows * cellSize / 2 + cellSize / 2,
-                    (cell.z + 0.5) * cellSize - this.settings.depth * cellSize / 2);
-                p.box(cellSize, cellSize, cellSize);
-                p.pop();
+        if (this.instancing) {
+            const { states, palette, shader, cube } = this.instancing;
+            for (let x = 0, offset = 0; x < cols; x++) {
+                for (let y = 0; y < rows; y++, offset += 4) {
+                    states.pixels[offset] = grid[x][y][zIndex].state;
+                }
+            }
+            states.updatePixels();
+            p.shader(shader);
+            shader.setUniform("states", states);
+            shader.setUniform("rows", rows);
+            shader.setUniform("gridSize", [cols, rows]);
+            shader.setUniform("cellSize", cellSize);
+            shader.setUniform("layerZ", (zIndex + 0.5) * cellSize - this.settings.depth * cellSize / 2);
+            shader.setUniform("palette", palette);
+            p.model(cube, cols * rows);
+            p.resetShader();
+        } else {
+            for (let x = 0; x < cols; x++) {
+                for (let y = 0; y < rows; y++) {
+                    const cell = grid[x][y][zIndex];
+                    p.push();
+                    p.fill(this.colors[cell.state]);
+                    p.translate(cell.x - cols * cellSize / 2 + cellSize / 2,
+                        cell.y - rows * cellSize / 2 + cellSize / 2,
+                        (cell.z + 0.5) * cellSize - this.settings.depth * cellSize / 2);
+                    p.box(cellSize, cellSize, cellSize);
+                    p.pop();
+                }
             }
         }
         for (const cell of grid.outsideLayers?.[zIndex]?.values() ?? []) {
