@@ -1,0 +1,295 @@
+{
+  "date": "2026-11-14T16:15:55.818Z",
+  "host": {
+    "cpu": "Apple M4 Pro",
+    "ramBytes": 25769803776,
+    "node": "v26.12.1"
+  },
+  "browser": "Chrome/157.0.8103.50",
+  "modernP5": [
+    {
+      "version": "2.4.0",
+      "mode": "webgl",
+      "size": 48,
+      "times": [
+        18.300000000745058,
+        18.5,
+        17.399999998509884,
+        17.199999999254942,
+        17
+      ],
+      "medianMs": 17.399999998509884,
+      "foregroundPixels": 69013,
+      "deviceLimits": null
+    },
+    {
+      "version": "2.4.0",
+      "mode": "webgpu",
+      "size": 48,
+      "times": [
+        24.600000001490116,
+        26,
+        22.900000002235174,
+        21.900000002235174,
+        21.700000002980232
+      ],
+      "medianMs": 22.900000002235174,
+      "foregroundPixels": 68949,
+      "deviceLimits": {
+        "maxBufferSize": 268435456,
+        "maxStorageBufferBindingSize": 134217728,
+        "maxTextureDimension2D": 8192
+      }
+    }
+  ],
+  "oldP5Control": [
+    {
+      "version": "2.1.2",
+      "mode": "webgl",
+      "size": 48,
+      "times": [
+        27.699999999254942,
+        26,
+        25.600000001490116,
+        25.5,
+        26.600000001490116
+      ],
+      "medianMs": 26,
+      "foregroundPixels": 69013,
+      "deviceLimits": null
+    }
+  ],
+  "environment": {
+    "p5": "2.1.2",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+    "dpr": 2,
+    "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)",
+    "maxTextureSize": 16384,
+    "maxRenderbufferSize": 16384,
+    "maxViewport": [
+      16384,
+      16384
+    ],
+    "heapLimit": 4395630592
+  },
+  "rendering": [
+    {
+      "size": 48,
+      "density": 1,
+      "pixels": [
+        576,
+        576
+      ],
+      "boxes": 2304,
+      "clearReadbackMs": 1.6000000014901161,
+      "immediateMs": [
+        29.699999999254942,
+        28.300000000745058,
+        26.900000002235174,
+        27.400000002235174,
+        28.699999999254942
+      ],
+      "immediateMedianMs": 28.300000000745058,
+      "buildTimes": [
+        46.899999998509884,
+        51.600000001490116,
+        39.600000001490116,
+        39.69999999925494,
+        39.80000000074506
+      ],
+      "drawTimes": [
+        9.900000002235174,
+        9.800000000745058,
+        8.699999999254942,
+        8.700000002980232,
+        9
+      ],
+      "buildMedianMs": 39.80000000074506,
+      "drawMedianMs": 9,
+      "pixelComparison": {
+        "changedChannels": 0,
+        "totalChannels": 1327104,
+        "maximumDifference": 0
+      },
+      "foregroundPixels": 69013,
+      "instancing": {
+        "times": [
+          1.3999999985098839,
+          1.300000000745058,
+          1.199999999254942,
+          2,
+          1.699999999254942
+        ],
+        "medianMs": 1.3999999985098839,
+        "pixelComparison": {
+          "changedChannels": 0,
+          "totalChannels": 1327104,
+          "maximumDifference": 0
+        }
+      }
+    },
+    {
+      "size": 48,
+      "density": 2,
+      "pixels": [
+        1152,
+        1152
+      ],
+      "boxes": 2304,
+      "clearReadbackMs": 4.100000001490116,
+      "immediateMs": [
+        32.19999999925494,
+        28.899999998509884,
+        27.300000000745058,
+        27.099999997764826,
+        28.599999997764826
+      ],
+      "immediateMedianMs": 28.599999997764826
+    },
+    {
+      "size": 192,
+      "density": 1,
+      "pixels": [
+        2304,
+        2304
+      ],
+      "boxes": 36864,
+      "clearReadbackMs": 16.5,
+      "immediateMs": [
+        416.6000000014901,
+        400.5,
+        407.30000000074506,
+        505.19999999925494,
+        472.69999999925494
+      ],
+      "immediateMedianMs": 416.6000000014901,
+      "foregroundPixels": 1104209,
+      "instancing": {
+        "times": [
+          8.199999999254942,
+          8.100000001490116,
+          7.300000000745058,
+          7.5,
+          7.800000000745058
+        ],
+        "medianMs": 7.800000000745058,
+        "pixelComparison": {
+          "changedChannels": 94,
+          "totalChannels": 21233664,
+          "maximumDifference": 58
+        }
+      }
+    }
+  ],
+  "simulation": [
+    {
+      "algorithm": "PN",
+      "rolling": false,
+      "samples": [
+        222.90000000223517,
+        231.89999999850988,
+        213.30000000074506
+      ],
+      "medianMs": 222.90000000223517,
+      "checksums": [
+        1863561605,
+        1863561605,
+        1863561605
+      ]
+    },
+    {
+      "algorithm": "PN",
+      "rolling": true,
+      "samples": [
+        212.5,
+        215.90000000223517,
+        206.69999999925494
+      ],
+      "medianMs": 212.5,
+      "checksums": [
+        1863561605,
+        1863561605,
+        1863561605
+      ]
+    },
+    {
+      "algorithm": "CA",
+      "rolling": false,
+      "samples": [
+        107.59999999776483,
+        107.30000000074506,
+        108.69999999925494
+      ],
+      "medianMs": 107.59999999776483,
+      "checksums": [
+        351325952,
+        351325952,
+        351325952
+      ]
+    },
+    {
+      "algorithm": "CA",
+      "rolling": true,
+      "samples": [
+        102.80000000074506,
+        102,
+        104.80000000074506
+      ],
+      "medianMs": 102.80000000074506,
+      "checksums": [
+        351325952,
+        351325952,
+        351325952
+      ]
+    }
+  ],
+  "memory": [
+    {
+      "kind": "objects",
+      "cells": 1179648,
+      "allocationMs": 32.100000001490116,
+      "heapDeltaBytes": 37772608,
+      "backingBytes": 0
+    },
+    {
+      "kind": "uint8",
+      "cells": 1179648,
+      "allocationMs": 3.099999997764826,
+      "heapDeltaBytes": 1185300,
+      "backingBytes": 1179648
+    }
+  ],
+  "scheduling": [
+    {
+      "count": 64,
+      "elapsedMs": 282.19999999925494
+    },
+    {
+      "count": 256,
+      "elapsedMs": 1148.199999999255
+    }
+  ],
+  "webgpu": {
+    "info": {},
+    "maxBufferSize": 4294967292,
+    "maxStorageBufferBindingSize": 4294967292,
+    "maxTextureDimension2D": 16384
+  },
+  "largeBackingStoreProbe": {
+    "logicalBytes": 4563402752,
+    "touchedBytes": 272,
+    "allReadable": true,
+    "note": "Virtual/logical allocation only; not a physical RAM stress test."
+  },
+  "defaultWorkload": {
+    "cols": 192,
+    "rows": 192,
+    "depth": 768,
+    "generations": 1344,
+    "cells": 49545216,
+    "canvas": [
+      3072,
+      6144
+    ]
+  }
+}

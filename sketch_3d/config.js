@@ -26,16 +26,16 @@ const CONFIG = {
         boundary: "grow", // "wrap", "grow"
         maxCellsPerAxisPerLayer: 100,
         forwardProbability: 1.0,
-        noiseSpaceScale: 0.0125,
-        noiseTimeScale: 0.05,
+        noiseSpaceScale: 0.01,
+        noiseTimeScale: 0.0,
         trajectory: {
-            slope: [0.0, 0.002], // cells per layer
-            bend: [-0.002, 0.002], // change in slope per layer
-            amplitude: [32, 512],
-            wavelength: [64, 2048],
-            phase: [Math.PI, 2 * Math.PI], // radians
+            slope: [0.0, 0.015], // cells per layer
+            bend: [-0.003, 0.003], // change in slope per layer
+            amplitude: [32, 256],
+            wavelength: [128, 1024],
+            phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.0125,
+                spaceScale: 0.01,
                 channels: "shared" // "separate", "shared"
             }
         }
