@@ -13,7 +13,7 @@ function initializeGrid(grid, settings, random) {
     const randomState = () => Math.floor(random() * settings.simulation.states);
     for (let x = 0; x < cols; x++) {
         for (let y = 0; y < rows; y++) {
-            setGridCell(grid, settings, x, y, 0, mode === "random" ? randomState() : 0);
+            grid.set(x, y, 0, mode === "random" ? randomState() : 0);
         }
     }
     if (mode === "random") {
@@ -37,7 +37,7 @@ function initializeGrid(grid, settings, random) {
         const [anchorX, anchorY] = origins[0];
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
-                setGridCell(grid, settings, x, y, 0,
+                grid.set(x, y, 0,
                     seedState(wrapIndex(x - anchorX, patternSize), wrapIndex(y - anchorY, patternSize)));
             }
         }
@@ -49,7 +49,7 @@ function initializeGrid(grid, settings, random) {
     for (const [originX, originY] of origins) {
         for (let x = 0; x < patternSize; x++) {
             for (let y = 0; y < patternSize; y++) {
-                setGridCell(grid, settings, originX + x, originY + y, 0, seedState(x, y));
+                grid.set(originX + x, originY + y, 0, seedState(x, y));
             }
         }
     }

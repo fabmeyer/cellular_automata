@@ -68,7 +68,7 @@ class PerlinMovement {
         const { cols, rows } = this.settings.grid;
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
-                if (grid[x][y][0].state !== 0) {
+                if (grid.get(x, y, 0) !== 0) {
                     const key = this.settings.pn.boundary === "grow" ? `${x},${y}` : x * rows + y;
                     const direction = this.perlinDirection(x, y, 0);
                     this.history.set(key, direction);
@@ -118,10 +118,12 @@ class PerlinMovement {
         const { noiseSpaceScale, noiseTimeScale, maxCellsPerAxisPerLayer } = this.settings.pn;
         const phase = this.random();
         const arrivals = new Map();
+        const previous = grid.layer(z - 1);
+        const next = grid.layer(z);
+        next.fill(0);
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
-                setGridCell(grid, this.settings, x, y, z, 0);
-                const state = grid[x][y][z - 1].state;
+                const state = previous[x * rows + y];
                 if (state === 0) {
                     continue;
                 }
@@ -145,9 +147,7 @@ class PerlinMovement {
         }
         const nextHistory = new Map();
         for (const [key, arrival] of arrivals) {
-            const x = Math.floor(key / rows);
-            const y = key % rows;
-            grid[x][y][z].state = arrival.state;
+            next[key] = arrival.state;
             nextHistory.set(key, arrival.direction.map(Math.sign));
         }
         this.history = nextHistory;
@@ -197,10 +197,11 @@ class PerlinMovement {
             }
             arrivals.set(targetKey, arrival);
         };
+        const previous = grid.layer(z - 1);
+        grid.layer(z).fill(0);
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
-                setGridCell(grid, this.settings, x, y, z, 0);
-                moveCell(x, y, grid[x][y][z - 1].state);
+                moveCell(x, y, previous[x * rows + y]);
             }
         }
         for (const cell of grid.outsideLayers[z - 1]?.values() ?? []) {
@@ -212,7 +213,7 @@ class PerlinMovement {
         for (const [key, arrival] of arrivals) {
             const { x, y, state } = arrival;
             if (x >= 0 && x < cols && y >= 0 && y < rows) {
-                grid[x][y][z].state = state;
+                grid.set(x, y, z, state);
             } else {
                 outside.set(key, { x, y, state });
             }
@@ -286,10 +287,12 @@ class PerlinMovement {
             throw new Error(`Invalid PN trajectory movement phase: ${phase}; expected a number in [0, 1)`);
         }
         const arrivals = new Map();
+        const previous = grid.layer(z - 1);
+        const next = grid.layer(z);
+        next.fill(0);
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
-                setGridCell(grid, this.settings, x, y, z, 0);
-                const state = grid[x][y][z - 1].state;
+                const state = previous[x * rows + y];
                 if (state === 0) {
                     continue;
                 }
@@ -313,7 +316,7 @@ class PerlinMovement {
         const nextHistory = new Map();
         const nextTrajectories = new Map();
         for (const [key, arrival] of arrivals) {
-            grid[Math.floor(key / rows)][key % rows][z].state = arrival.state;
+            next[key] = arrival.state;
             nextHistory.set(key, arrival.direction.map(Math.sign));
             nextTrajectories.set(key, this.mergeTrajectories(arrival.trajectories, z));
         }

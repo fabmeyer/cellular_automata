@@ -163,7 +163,7 @@ async function main() {
                         for (let x = 0; x < size; x++) {
                             for (let y = 0; y < size; y++) {
                                 const offset = (x * size + y) * 4;
-                                stateImage.pixels[offset] = sim.grid[x][y][0].state;
+                                stateImage.pixels[offset] = sim.grid.get(x, y, 0);
                                 stateImage.pixels[offset + 3] = 255;
                             }
                         }
@@ -256,10 +256,10 @@ async function main() {
                         while ((z = sim.step()) !== null) {
                             for (let x = 0; x < 96; x++) {
                                 for (let y = 0; y < 96; y++) {
-                                    checksum = (Math.imul(checksum, 31) + sim.grid[x][y][z].state) >>> 0;
-                                    if (rolling) sim.grid[x][y][z - 1] = null;
+                                    checksum = (Math.imul(checksum, 31) + sim.grid.get(x, y, z)) >>> 0;
                                 }
                             }
+                            if (rolling) sim.grid.layers[z - 1] = null;
                             for (const cell of sim.grid.outsideLayers?.[z]?.values() ?? []) {
                                 for (const value of [cell.x, cell.y, cell.state]) {
                                     checksum = (Math.imul(checksum, 31) + value) >>> 0;
@@ -288,7 +288,7 @@ async function main() {
                 if (kind === 'objects') {
                     storage = Array.from({ length: 96 }, (_, x) =>
                         Array.from({ length: 96 }, (_, y) =>
-                            Array.from({ length: 128 }, (_, z) => new Cell(x * 4, y * 4, z, z % 9))));
+                            Array.from({ length: 128 }, (_, z) => ({ x: x * 4, y: y * 4, z, state: z % 9 }))));
                 } else {
                     storage = new Uint8Array(96 * 96 * 128);
                     for (let i = 0; i < storage.length; i++) storage[i] = i % 9;
@@ -410,6 +410,8 @@ async function benchmarkModernP5(browser, port, root, modern) {
                 pixelDensity(1);
                 const drawing = Object.create(globalThis);
                 Object.defineProperty(drawing, 'createCanvas', { value: () => canvas });
+                // This comparison measures the per-cell path; the instanced GLSL shader cannot run on WebGPU.
+                Object.defineProperty(drawing, 'createShader', { value: undefined });
                 seed = 123;
                 const renderer = new GridRenderer(sim.settings, drawing, random);
                 renderer.setup();

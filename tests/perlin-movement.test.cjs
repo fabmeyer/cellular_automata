@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { createHarness, plain, seededRandom, drawingStub } = require('./helpers.cjs');
+const { createHarness, plain, layerStates, seededRandom, drawingStub } = require('./helpers.cjs');
 
 function simulation(probability = 0.5, stateCount = 2, memoryEnabled = false, limit = 1) {
     let phase = 0;
@@ -17,13 +17,9 @@ function simulation(probability = 0.5, stateCount = 2, memoryEnabled = false, li
         phase = 0;
         subject.initialize();
         algorithm.history.clear();
-        for (const column of subject.grid) {
-            for (const layers of column) {
-                layers[0].state = 0;
-            }
-        }
+        subject.grid.layer(0).fill(0);
         for (const [x, y, dx, dy, state = 1] of cells) {
-            subject.grid[x][y][0].state = state;
+            subject.grid.set(x, y, 0, state);
             algorithm.history.set(x * subject.settings.grid.rows + y, [dx, dy]);
         }
     }
@@ -108,7 +104,7 @@ test('empty cells have no agency, layers remain valid, and missing history fails
     sim.seed([]);
     sim.subject.step();
     assert.deepEqual(sim.occupied(), []);
-    assert.ok(sim.subject.grid.every(column => column.every(layers => layers[1]?.state === 0)));
+    assert.ok(sim.subject.grid.layer(1).every(state => state === 0));
     sim.seed([[1, 1, 1, 0]]);
     sim.algorithm.history.clear();
     assert.throws(() => sim.subject.step(), /Missing movement history/);
@@ -135,7 +131,7 @@ test('collisions merge occupancy and sum all vectors independent of arrival orde
             sim.seed(cells);
             sim.subject.step();
             assert.deepEqual(sim.occupied(), [[3, 3, 0, 1]]);
-            assert.equal(sim.subject.grid[3][3][1].state, Math.max(...states));
+            assert.equal(sim.subject.grid.get(3, 3, 1), Math.max(...states));
         }
     }
 });
@@ -146,12 +142,12 @@ test('cancelled vectors stay straight up; stationary arrivals contribute zero di
     sim.noise(0.3);
     sim.subject.step();
     assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
-    assert.equal(sim.subject.grid[3][3][1].state, 2);
+    assert.equal(sim.subject.grid.get(3, 3, 1), 2);
     sim.seed([[2, 3, 1, 0, 2], [3, 3, 0, -1, 1]]);
     sim.noise(x => x < 0.125 ? 0 : 0.7);
     sim.subject.step();
     assert.deepEqual(sim.occupied(), [[3, 3, 1, 0]]);
-    assert.equal(sim.subject.grid[3][3][1].state, 2);
+    assert.equal(sim.subject.grid.get(3, 3, 1), 2);
 });
 
 test('corner initialization resets history, leaves surroundings empty, and tracks all occupied states', () => {
@@ -162,11 +158,11 @@ test('corner initialization resets history, leaves surroundings empty, and track
             sim.noise(0.6);
             sim.algorithm.history.set(27, [-1, -1]);
             sim.subject.initialize();
-            assert.equal(sim.subject.grid[3][3][0].state, 0);
+            assert.equal(sim.subject.grid.get(3, 3, 0), 0);
             assert.equal(sim.algorithm.history.has(27), false);
             assert.equal(sim.occupied().length, 16);
             assert.ok(sim.occupied().every(([x, y, dx, dy]) =>
-                sim.subject.grid[x][y][0].state === state && dx === 1 && dy === 0));
+                sim.subject.grid.get(x, y, 0) === state && dx === 1 && dy === 0));
         }
     }
 });
@@ -191,7 +187,7 @@ test('every occupied color survives forward, alternative, stationary, and wrappe
             sim.phase(phase);
             sim.subject.step();
             assert.deepEqual(sim.occupied(), [[expectedX, expectedY, dx, dy]]);
-            assert.equal(sim.subject.grid[expectedX][expectedY][1].state, state);
+            assert.equal(sim.subject.grid.get(expectedX, expectedY, 1), state);
         }
     }
 });
@@ -209,7 +205,7 @@ test('straight-up history continues at exactly the configured phase probability'
             if (x === 3 && y === 3) {
                 straight++;
                 assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
-                assert.equal(sim.subject.grid[3][3][1].state, 2);
+                assert.equal(sim.subject.grid.get(3, 3, 1), 2);
             }
         }
         assert.equal(straight, 64 * probability);
@@ -225,7 +221,7 @@ test('a lateral stay becomes a persistent straight-up line', () => {
     sim.subject.step();
     sim.subject.step();
     assert.deepEqual(sim.occupied(), [[3, 3, 0, 0]]);
-    assert.ok(sim.subject.grid[3][3].slice(0, 4).every(cell => cell.state === 2));
+    assert.ok([0, 1, 2, 3].every(z => sim.subject.grid.get(3, 3, z) === 2));
 });
 
 test('straight-up can turn into each lateral direction, and Perlin initializes all nine directions', () => {
@@ -268,10 +264,9 @@ test('binary and multistate layers maintain valid states, nonincreasing occupanc
             sim.subject.step();
             assert.ok(sim.occupied().length <= count);
             count = sim.occupied().length;
-            assert.ok(sim.subject.grid.every(column => column.every(layers =>
-                Number.isInteger(layers[z].state) && layers[z].state >= 0 && layers[z].state < stateCount)));
+            assert.ok(sim.subject.grid.layer(z).every(state => state < stateCount));
             assert.deepEqual(Array.from(sim.subject.memory.getLatestRow()),
-                plain(sim.subject.grid[0].map(layers => layers[z].state)));
+                plain(layerStates(sim.subject.grid, z)[0]));
         }
     }
 });
@@ -297,7 +292,7 @@ function trajectorySimulation(parameters = {}, options = {}) {
     const { subject } = harness;
     subject.initialize();
     for (const [x, y, state = 1] of options.cells ?? [[4, 3]]) {
-        subject.grid[x][y][0].state = state;
+        subject.grid.set(x, y, 0, state);
     }
     subject.algorithm.initialize(subject.grid);
     return {
@@ -327,7 +322,7 @@ test('trajectory slopes produce exact static, half, full, mirrored, and diagonal
             }));
             const path = sim.subject.algorithm.trajectories.values().next().value;
             assert.deepEqual(plain(path.direction), direction);
-            assert.equal(sim.subject.grid[sim.position()[0]][sim.position()[1]][z].state, 1);
+            assert.equal(sim.subject.grid.get(sim.position()[0], sim.position()[1], z), 1);
         }
     }
 });
@@ -404,7 +399,7 @@ test('all trajectory ranges use stable separate or shared spatial Perlin channel
             'later layers sample movement noise, not parameter fields');
         sim.subject.initialize();
         assert.equal(sim.subject.algorithm.trajectories.size, 0);
-        sim.subject.grid[4][3][0].state = 1;
+        sim.subject.grid.set(4, 3, 0, 1);
         calls.length = 0;
         sim.subject.algorithm.initialize(sim.subject.grid);
         assert.deepEqual(plain(sim.subject.algorithm.trajectories.get(4 * 8 + 3).parameters), before[0]);
@@ -457,9 +452,9 @@ test('trajectory wrapping preserves direction, sub-cell progress, colors, and ro
     for (let z = 1; z < 7; z++) {
         sim.subject.step();
         assert.deepEqual(sim.position(), [(31 + Math.floor(z / 2)) % 32, 3]);
-        assert.equal(sim.subject.grid[sim.position()[0]][3][z].state, 2);
+        assert.equal(sim.subject.grid.get(sim.position()[0], 3, z), 2);
         assert.deepEqual(Array.from(sim.subject.memory.getLatestRow()),
-            plain(sim.subject.grid[0].map(layers => layers[z].state)));
+            plain(layerStates(sim.subject.grid, z)[0]));
     }
     sim.subject.algorithm.trajectories.clear();
     assert.throws(() => sim.subject.step(), /Missing trajectory history/);
@@ -472,7 +467,7 @@ test('trajectory collisions average parameters and fractional directions, retain
     algorithm.trajectories.get(4 * 8 + 2).direction = [0, 1];
     sim.subject.step();
     assert.deepEqual(sim.position(), [4, 3]);
-    assert.equal(sim.subject.grid[4][3][1].state, 2);
+    assert.equal(sim.subject.grid.get(4, 3, 1), 2);
     assert.deepEqual(plain(algorithm.trajectories.values().next().value.direction), [0.5, 0.5]);
     assert.deepEqual(plain(algorithm.trajectories.values().next().value.offset), [0, 0]);
     sim.subject.step();
@@ -518,13 +513,13 @@ test('spatially varied trajectories preserve valid layers and nonincreasing occu
             let count = subject.algorithm.trajectories.size;
             for (let z = 1; z < subject.settings.depth; z++) {
                 subject.step();
-                const occupied = subject.grid.flatMap(column => column.map(layers => layers[z].state))
+                const occupied = layerStates(subject.grid, z).flat()
                     .filter(state => state !== 0);
                 assert.equal(occupied.length, subject.algorithm.trajectories.size);
                 assert.ok(occupied.length <= count);
                 assert.ok(occupied.every(state => Number.isInteger(state) && state > 0 && state < states));
                 assert.deepEqual(Array.from(subject.memory.getLatestRow()),
-                    plain(subject.grid[0].map(layers => layers[z].state)));
+                    plain(layerStates(subject.grid, z)[0]));
                 count = occupied.length;
             }
             assert.equal(subject.step(), null);
@@ -538,7 +533,7 @@ function assertTranslatedLayer(subject, initial, z, dx, dy) {
         for (let y = 0; y < rows; y++) {
             const sourceX = ((x - dx) % cols + cols) % cols;
             const sourceY = ((y - dy) % rows + rows) % rows;
-            assert.equal(subject.grid[x][y][z].state, initial[sourceX][sourceY]);
+            assert.equal(subject.grid.get(x, y, z), initial[sourceX][sourceY]);
         }
     }
 }
@@ -559,7 +554,7 @@ test('zero movement scales and probability one preserve collision-free legacy li
             noise: (...coordinates) => { calls.push(coordinates); return sample; }
         });
         subject.initialize();
-        const initial = subject.grid.map(column => column.map(layers => layers[0].state));
+        const initial = layerStates(subject.grid, 0);
         const count = subject.algorithm.history.size;
         for (let z = 1; z < subject.settings.depth; z++) {
             subject.step();
@@ -611,7 +606,7 @@ test('zero parameter scale synchronizes curves without collisions for both chann
             }
         });
         subject.initialize();
-        const initial = subject.grid.map(column => column.map(layers => layers[0].state));
+        const initial = layerStates(subject.grid, 0);
         const count = subject.algorithm.trajectories.size;
         const parameters = subject.algorithm.trajectories.values().next().value.parameters;
         const normalizedSlope = parameters.slope / 0.25;
@@ -644,7 +639,7 @@ test('varying trajectory parameters can still collide with zero movement scales 
     assert.equal(sim.subject.algorithm.trajectories.size, 2);
     sim.subject.step();
     assert.deepEqual(sim.position(), [1, 3]);
-    assert.equal(sim.subject.grid[1][3][1].state, 2);
+    assert.equal(sim.subject.grid.get(1, 3, 1), 2);
 });
 
 test('multi-cell preferred movements keep forward probability and eight adjacent alternatives', () => {
@@ -677,7 +672,7 @@ test('legacy scales continued movement but not alternatives or stationary motion
     sim.subject.step();
     sim.subject.step();
     assert.deepEqual(sim.occupied(), [[5, 3, 1, 0]]);
-    assert.equal(sim.subject.grid[5][3][2].state, 2);
+    assert.equal(sim.subject.grid.get(5, 3, 2), 2);
 
     sim.seed([[4, 4, 1, 0]]);
     sim.phase(0.53);
@@ -734,12 +729,12 @@ test('multi-cell legacy and trajectory jumps merge only at shared destinations, 
             }
             sim.subject.step();
             assert.equal(sim.subject.algorithm.history.size, collision ? 1 : 2);
-            assert.equal(sim.subject.grid[2][3][1].state, 2);
-            assert.equal(sim.subject.grid[1][3][1].state, 0);
+            assert.equal(sim.subject.grid.get(2, 3, 1), 2);
+            assert.equal(sim.subject.grid.get(1, 3, 1), 0);
             if (collision) {
                 assert.deepEqual(Array.from(sim.subject.algorithm.history.get(2 * 8 + 3)), [0, 0]);
             } else {
-                assert.equal(sim.subject.grid[0][3][1].state, 1);
+                assert.equal(sim.subject.grid.get(0, 3, 1), 1);
             }
         }
     }
@@ -750,7 +745,7 @@ test('jumps larger than grid dimensions wrap repeatedly and preserve signed move
     legacy.seed([[7, 0, 1, -1, 2]]);
     legacy.subject.step();
     assert.deepEqual(legacy.occupied(), [[1, 6, 1, -1]]);
-    assert.equal(legacy.subject.grid[1][6][1].state, 2);
+    assert.equal(legacy.subject.grid.get(1, 6, 1), 2);
 
     const trajectory = trajectorySimulation({ slope: [10, 10] }, {
         grid: { cols: 5, rows: 4 }, cells: [[4, 3, 2]],
@@ -759,7 +754,7 @@ test('jumps larger than grid dimensions wrap repeatedly and preserve signed move
     for (let z = 1; z < 8; z++) {
         trajectory.subject.step();
         assert.deepEqual(trajectory.position(), [4, ((3 - 10 * z) % 4 + 4) % 4]);
-        assert.equal(trajectory.subject.grid[4][trajectory.position()[1]][z].state, 2);
+        assert.equal(trajectory.subject.grid.get(4, trajectory.position()[1], z), 2);
     }
 });
 
@@ -788,7 +783,7 @@ function outwardSimulation(mode, cells, options = {}) {
     const { subject } = harness;
     subject.initialize();
     for (const [x, y, state] of cells) {
-        subject.grid[x][y][0].state = state;
+        subject.grid.set(x, y, 0, state);
     }
     subject.algorithm.initialize(subject.grid);
     return harness;
@@ -855,8 +850,8 @@ test('outward movement samples noise at exterior coordinates and matches wrap in
         for (let z = 1; z <= 2; z++) {
             grow.step();
             wrap.step();
-            assert.deepEqual(plain(grow.grid.map(column => column.map(layers => layers[z].state))),
-                plain(wrap.grid.map(column => column.map(layers => layers[z].state))), mode);
+            assert.deepEqual(plain(layerStates(grow.grid, z)),
+                plain(layerStates(wrap.grid, z)), mode);
             assert.equal(grow.grid.outsideLayers[z].size, 0, mode);
         }
     }
@@ -868,7 +863,7 @@ test('outward paths can reverse and re-enter with original row memory intact', (
     assert.deepEqual(Array.from(legacy.memory.getLatestRow()), [0, 0, 0, 0]);
     legacy.algorithm.history.set('-1,1', [1, 0]);
     legacy.step();
-    assert.equal(legacy.grid[0][1][2].state, 2);
+    assert.equal(legacy.grid.get(0, 1, 2), 2);
     assert.equal(legacy.grid.outsideLayers[2].size, 0);
     assert.deepEqual(Array.from(legacy.memory.getLatestRow()), [0, 2, 0, 0]);
 
@@ -878,7 +873,7 @@ test('outward paths can reverse and re-enter with original row memory intact', (
     for (let z = 1; z <= 4; z++) {
         trajectory.step();
     }
-    assert.equal(trajectory.grid[3][1][4].state, 2);
+    assert.equal(trajectory.grid.get(3, 1, 4), 2);
     assert.equal(trajectory.grid.outsideLayers[4].size, 0);
     assert.deepEqual(Array.from(trajectory.memory.getLatestRow()), [0, 0, 0, 0]);
 });
@@ -899,7 +894,7 @@ test('returning exterior cells collide with in-grid arrivals in both modes', () 
             }
         }
         subject.step();
-        assert.equal(subject.grid[3][1][2].state, 2, mode);
+        assert.equal(subject.grid.get(3, 1, 2), 2, mode);
         assert.equal(subject.algorithm.history.size, 1, mode);
         assert.equal(subject.grid.outsideLayers[2].size, 0, mode);
     }

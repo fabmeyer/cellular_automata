@@ -130,6 +130,21 @@ has been drawn into a persistent accumulation target.
   - Pixel differences were at most 0.08% of channels, on cube edges only.
   - Non-square grids (23x31 PN, 31x17 CA) also matched.
 
+**Status:** option 3 is implemented in `sketch_3d/grid.js` (`StateGrid`).
+- One `Uint8Array(cols * rows)` per layer, x-major (`x * rows + y`). States
+  are validated to 2..9, so one byte is enough; `Uint16Array` would only double
+  memory. Per-layer buffers avoid any single multi-GiB allocation.
+- Access goes through `grid.get/set/layer`; CA, PN, memory and the renderer read
+  layer arrays directly. Grown PN outside cells remain sparse `Map`s.
+- All seven CA/PN modes (48x48x84, memory on) produced byte-identical layers and
+  outside cells versus the `Cell` implementation; simulation-only time fell
+  1.2-3.6x.
+- Node, PN legacy wrap, 192x192x1344: heap **3026 MiB -> 47 MiB**, simulation
+  **11.4 s -> 1.0 s**.
+- Chromium headless, full default config, with instancing: end-to-end
+  **17.0 s -> 13.4 s**, final JS heap **1665 MiB -> 93 MiB** (one random run
+  each).
+
 **Compact history:** the reference-release prototype still leaves preallocated
 history slots in place; achieving the 672x dense-state saving requires a real
 ring-buffer redesign, not merely assigning null. For tiling, camera changes,

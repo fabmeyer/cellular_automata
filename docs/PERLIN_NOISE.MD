@@ -21,7 +21,7 @@ states:
 - State 0 is empty and never acts.
 - Each occupied cell has one destination in the next layer.
 - Movement preserves its state/color unless arrivals merge.
-- Plane boundaries wrap by default; the `"grow"` option continues beyond them.
+- Plane boundaries can wrap or continue outward with the `"grow"` option.
 - Collisions merge occupants, so occupied-cell counts can stay constant or
   decrease, but never increase through movement.
 
@@ -97,7 +97,7 @@ amplitude.
 | `grid.factor` | In the supplied CONFIG getters, scales cols, rows, and baseDepth together. It is not a Perlin parameter; the derived dimensions are validated. |
 | `grid.cellSize` | Positive finite cube size in pixels. It changes presentation, not cell-space motion or noise sampling. |
 | `simulation.states` | Integer 2 through 9, including empty state 0. |
-| `simulation.numGenerations` | Positive int32 total layer count including layer 0. The current getter uses 1.5 times visual depth; replace it with a number for an independent count. |
+| `simulation.numGenerations` | Positive int32 total layer count including layer 0. The current getter uses 1.75 times visual depth; replace it with a number for an independent count. |
 | `simulation.timeInterval` | Delay between rendered generations, 0 through 2147483647 milliseconds. It does not define `noiseTimeScale` or `wavelength`. |
 | `memory.enabled` | PN repetition reporting only; it does not mutate PN movement rules or trajectories. |
 
@@ -439,7 +439,7 @@ or forbidding stationary collision results.
 
 ### Destination-only movement
 
-With the default `pn.boundary: "wrap"`, both modes wrap targets in x and y,
+With `pn.boundary: "wrap"`, both modes wrap targets in x and y,
 even when a jump crosses multiple grid widths. With `pn.boundary: "grow"`,
 occupied cells retain their actual coordinates beyond the original plane. They
 continue moving, can collide outside, and can return inside; the number of

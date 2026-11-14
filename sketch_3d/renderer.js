@@ -114,12 +114,11 @@ class GridRenderer {
         p.rotateX(Math.PI * rx);
         p.rotateY(Math.PI * ry);
         p.rotateZ(Math.PI * rz);
+        const layer = grid.layer(zIndex);
         if (this.instancing) {
             const { states, palette, shader, cube } = this.instancing;
-            for (let x = 0, offset = 0; x < cols; x++) {
-                for (let y = 0; y < rows; y++, offset += 4) {
-                    states.pixels[offset] = grid[x][y][zIndex].state;
-                }
+            for (let i = 0; i < layer.length; i++) {
+                states.pixels[i * 4] = layer[i];
             }
             states.updatePixels();
             p.shader(shader);
@@ -134,12 +133,11 @@ class GridRenderer {
         } else {
             for (let x = 0; x < cols; x++) {
                 for (let y = 0; y < rows; y++) {
-                    const cell = grid[x][y][zIndex];
                     p.push();
-                    p.fill(this.colors[cell.state]);
-                    p.translate(cell.x - cols * cellSize / 2 + cellSize / 2,
-                        cell.y - rows * cellSize / 2 + cellSize / 2,
-                        (cell.z + 0.5) * cellSize - this.settings.depth * cellSize / 2);
+                    p.fill(this.colors[layer[x * rows + y]]);
+                    p.translate(x * cellSize - cols * cellSize / 2 + cellSize / 2,
+                        y * cellSize - rows * cellSize / 2 + cellSize / 2,
+                        (zIndex + 0.5) * cellSize - this.settings.depth * cellSize / 2);
                     p.box(cellSize, cellSize, cellSize);
                     p.pop();
                 }

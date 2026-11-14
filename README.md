@@ -43,14 +43,14 @@ for memory findings and observability details.
 | `grid.cellSize` | Positive cube size | `4` |
 | `simulation.algorithm` | `"CA"` or `"PN"` | `"PN"` |
 | `simulation.states` | Integer 2 through 9, including empty state **0** | `9` |
-| `simulation.numGenerations` | Positive integer total layer count, including the initial plane | 1.5 times effective view depth |
+| `simulation.numGenerations` | Positive integer total layer count, including the initial plane | 1.75 times effective view depth |
 | `simulation.timeInterval` | Nonnegative delay between generations, in ms | `1` |
 | `ca.rule` | `"counts"`, `"sum"`, `"majority"` | `"majority"` |
 | `ca.neighborhoodSize` | Positive odd side length; independent of seed size | `9` |
 | `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.67` |
 | `ca.cycleUniform` | Boolean enabling uniform-neighborhood cycling for all CA rules | `true` |
 | `pn.mode` | `"legacy"` integer-direction movement or `"trajectory"` slopes/curves | `"legacy"` |
-| `pn.boundary` | `"wrap"` across plane edges or `"grow"` beyond them | `"wrap"` |
+| `pn.boundary` | `"wrap"` across plane edges or `"grow"` beyond them | `"grow"` |
 | `pn.maxCellsPerAxisPerLayer` | Positive int32 limit in cells per axis per layer; legacy continuation speed, trajectory speed ceiling | `1` |
 | `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement (legacy) or following the planned movement (trajectory) | `0.1` |
 | `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Nonnegative Perlin spatial/time scales; zero fixes the corresponding sampling coordinates | `0.01`, `0.01` |
@@ -322,7 +322,7 @@ depends on recognizing special keys in a rule map.
 
 Visual depth is `baseDepth` for sideways and twice that for vertical.
 `simulation.numGenerations` sets the total number of layers, including the
-initial layer. Its current getter uses 1.5 times the effective visual depth.
+initial layer. Its current getter uses 1.75 times the effective visual depth.
 Replace the getter with `numGenerations: 1000,` to retain 1,000 layers
 independently of orientation and depth.
 The camera stays fixed to the visual depth: shorter runs leave unused space,

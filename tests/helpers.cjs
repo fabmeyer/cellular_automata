@@ -13,14 +13,14 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
     for (const { file, source } of scripts) {
         vm.runInContext(source, context, { filename: file });
     }
-    const classes = vm.runInContext('({ Simulation, GridRenderer, RowMemory, wrapIndex, d4Representative, resolveConfig })',
+    const classes = vm.runInContext('({ Simulation, GridRenderer, RowMemory, StateGrid, wrapIndex, d4Representative, resolveConfig })',
         context);
     const defaults = structuredClone(vm.runInContext('CONFIG', context));
     const config = {
         ...defaults,
         grid: { ...defaults.grid, cols: 8, rows: 8, baseDepth: 8 },
         pn: {
-            ...defaults.pn, mode: 'legacy', maxCellsPerAxisPerLayer: 1,
+            ...defaults.pn, mode: 'legacy', boundary: 'wrap', maxCellsPerAxisPerLayer: 1,
             trajectory: {
                 ...defaults.pn.trajectory, slope: [0, 0.5], bend: [0, 0],
                 amplitude: [0, 0], wavelength: [32, 32], phase: [0, 2 * Math.PI]
@@ -42,6 +42,11 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
 
 function plain(value) {
     return JSON.parse(JSON.stringify(value));
+}
+
+// Nested [x][y] array of one layer's states, for readable assertions.
+function layerStates(grid, z) {
+    return Array.from({ length: grid.cols }, (_, x) => Array.from({ length: grid.rows }, (_, y) => grid.get(x, y, z)));
 }
 
 function seededRandom(seed = 123) {
@@ -66,4 +71,4 @@ function drawingStub() {
     return { drawing, calls };
 }
 
-module.exports = { createHarness, plain, seededRandom, drawingStub };
+module.exports = { createHarness, plain, layerStates, seededRandom, drawingStub };

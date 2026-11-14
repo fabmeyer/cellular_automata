@@ -110,7 +110,9 @@ one run completed all layers and exported the PNG in approximately 497 seconds,
 well beyond the former 180-second protocol cutoff. Its completion sample
 reported 1,675 MiB of used JavaScript heap against a 4,192 MiB reported limit.
 These are measurements from one random run, not resource guarantees or peak
-memory measurements. Larger or different settings may still exceed Chromium
+memory measurements. Since then, instanced rendering and one-byte-per-cell
+layer storage brought the same configuration to about 13 seconds and under
+140 MiB of JavaScript heap. Larger or different settings may still exceed Chromium
 or WebGL resource limits.
 
 If a full run exceeds the renderer's capacity, larger Chromium heap flags are

@@ -68,17 +68,21 @@ class CellularAutomaton {
         const { cols, rows } = this.settings.grid;
         const radius = Math.floor(this.settings.ca.neighborhoodSize / 2);
         this.lastLayerRuleKeys = Array.from({ length: cols }, () => new Array(rows).fill(null));
+        const previous = grid.layer(z - 1);
+        const next = grid.layer(z);
+        const counts = new Array(this.settings.simulation.states);
         for (let x = 0; x < cols; x++) {
             for (let y = 0; y < rows; y++) {
-                const counts = new Array(this.settings.simulation.states).fill(0);
+                counts.fill(0);
                 for (let dx = -radius; dx <= radius; dx++) {
+                    const neighborColumn = wrapIndex(x + dx, cols) * rows;
                     for (let dy = -radius; dy <= radius; dy++) {
-                        counts[grid[wrapIndex(x + dx, cols)][wrapIndex(y + dy, rows)][z - 1].state]++;
+                        counts[previous[neighborColumn + wrapIndex(y + dy, rows)]]++;
                     }
                 }
-                const state = this.resolveState(counts, grid[x][y][z - 1].state);
+                const state = this.resolveState(counts, previous[x * rows + y]);
                 this.lastLayerRuleKeys[x][y] = this.lastRuleKey;
-                setGridCell(grid, this.settings, x, y, z, state);
+                next[x * rows + y] = state;
             }
         }
     }

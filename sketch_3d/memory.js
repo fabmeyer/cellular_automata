@@ -15,11 +15,8 @@ class RowMemory {
     }
 
     extractRowStates(grid, zIndex) {
-        const row = new Uint8Array(this.rowLength);
-        for (let y = 0; y < this.rowLength; y++) {
-            row[y] = grid[0][y][zIndex].state;
-        }
-        return row;
+        // Column x = 0 is the first rowLength bytes of the layer.
+        return grid.layer(zIndex).slice(0, this.rowLength);
     }
 
     hashRow(row) {

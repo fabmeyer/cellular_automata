@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const vm = require('node:vm');
-const { createHarness, seededRandom, drawingStub, plain } = require('./helpers.cjs');
+const { createHarness, seededRandom, drawingStub, plain, layerStates } = require('./helpers.cjs');
 
 const initializers = [
     { mode: 'random' },
@@ -33,7 +33,7 @@ test('CA and PN render the requested palette for empty and occupied states', () 
         assert.equal(draws, 6, algorithm);
         subject.initialize();
         for (let x = 0; x < 3; x++) {
-            subject.grid[x][0][0].state = x;
+            subject.grid.set(x, 0, 0, x);
         }
         renderer.drawLayer(subject.grid, 0);
         assert.deepEqual(calls.filter(([name]) => name === 'fill').map(([, color]) => color),
@@ -75,9 +75,7 @@ test('all 756 algorithm/rule/cycling, initializer, view, memory, and state-count
                         }
                         assert.equal(subject.step(), null, label);
                         assert.equal(subject.step(), null, label);
-                        assert.ok(subject.grid.every(column => column.every(layers =>
-                            layers.every(cell => cell && Number.isInteger(cell.state) &&
-                                cell.state >= 0 && cell.state < states))), label);
+                        assert.ok(subject.grid.layers.every(layer => layer.every(state => state < states)), label);
                         assert.equal(calls.filter(([name]) => name === 'box').length, 6 * 5 * depth, label);
                         assert.ok(calls.filter(([name]) => name === 'fill').every(([, color]) =>
                             typeof color === 'string'), label);
@@ -110,8 +108,7 @@ test('memory and view changes do not alter the shared generations for any algori
                     for (let z = 1; z < 8; z++) {
                         subject.step();
                     }
-                    const generations = plain(subject.grid.map(column => column.map(layers =>
-                        layers.slice(0, 8).map(cell => cell.state))));
+                    const generations = Array.from({ length: 8 }, (_, z) => layerStates(subject.grid, z));
                     if (baseline) {
                         assert.deepEqual(generations, baseline);
                     } else {
@@ -129,14 +126,14 @@ test('initializers tile and stamp non-looping corners on rectangular grids with 
             grid: { cols: 6, rows: 5 }, initial, simulation: { states: 2 }
         }, { random: () => 0.75 });
         subject.initialize();
-        const occupied = subject.grid.flatMap(column => column.map(layers => layers[0].state))
+        const occupied = layerStates(subject.grid, 0).flat()
             .filter(state => state !== 0).length;
         const expected = initial.mode === 'random' || initial.placement === 'tiled' ? 30 : 16;
         assert.equal(occupied, expected, JSON.stringify(initial));
         if (initial.placement === 'corners') {
-            assert.equal(subject.grid[0][0][0].state, 1);
-            assert.equal(subject.grid[5][4][0].state, 1);
-            assert.equal(subject.grid[2][2][0].state, 0);
+            assert.equal(subject.grid.get(0, 0, 0), 1);
+            assert.equal(subject.grid.get(5, 4, 0), 1);
+            assert.equal(subject.grid.get(2, 2, 0), 0);
         }
     }
 });
@@ -152,7 +149,7 @@ test('center always loops and looping corners repeat the placed seed seamlessly'
                     initial: { mode: 'seed', symmetry, placement, patternSize, loopPattern }
                 }, { random: seededRandom(7) });
                 subject.initialize();
-                const state = (x, y) => subject.grid[x][y][0].state;
+                const state = (x, y) => subject.grid.get(x, y, 0);
                 const [originX, originY] = placement === 'center'
                     ? [Math.floor((cols - patternSize) / 2), Math.floor((rows - patternSize) / 2)] : [0, 0];
                 const label = JSON.stringify({ symmetry, placement, cols, rows, patternSize });
@@ -179,7 +176,7 @@ test('D4 seeds preserve every rotation/reflection and tiled repetition, includin
         initial: { symmetry: 'D4', placement: 'tiled', patternSize: 3 }
     }, { random: seededRandom() });
     subject.initialize();
-    const state = (x, y) => subject.grid[x][y][0].state;
+    const state = (x, y) => subject.grid.get(x, y, 0);
     for (let x = 0; x < 8; x++) {
         for (let y = 0; y < 7; y++) {
             assert.equal(state(x, y), state(x % 3, y % 3));
@@ -203,7 +200,7 @@ test('overlapping corner seeds have deterministic last-stamp-wins behavior', () 
         initial: { patternSize: 2, symmetry: 'plain', placement: 'corners' }
     }, { random: () => value++ / 4 });
     subject.initialize();
-    assert.deepEqual(plain(subject.grid.map(column => column.map(layers => layers[0].state))),
+    assert.deepEqual(plain(layerStates(subject.grid, 0)),
         [[0, 0, 1], [0, 0, 1], [2, 2, 3]]);
 });
 
@@ -288,7 +285,7 @@ test('CA neighborhoods include the center, wrap both axes, and read only the pre
         observed.push([Array.from(counts), current]);
         return 2;
     };
-    subject.grid[0][0][0].state = 1;
+    subject.grid.set(0, 0, 0, 1);
     subject.step();
     assert.equal(observed.length, 9);
     assert.ok(observed.every(([counts]) => counts[0] === 8 && counts[1] === 1 && counts[2] === 0));
@@ -323,7 +320,7 @@ test('memory changes an active non-uniform interior rule when the repeated side 
         memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 0.25 }
     });
     subject.initialize();
-    subject.grid[4][0][0].state = 1;
+    subject.grid.set(4, 0, 0, 1);
     subject.step();
     subject.step();
     assert.equal(subject.algorithm.lastLayerRuleKeys[0][0], null);
@@ -347,7 +344,7 @@ test('memory retries when a uniform cycle later has an eligible interior rule', 
     assert.ok(logs.some(([message]) => message.includes('no non-uniform CA rule')));
     assert.ok(!logs.some(([message]) => message.includes('Memory changed CA rule')));
 
-    subject.grid[4][0][2].state = 1;
+    subject.grid.set(4, 0, 2, 1);
     subject.step();
     assert.ok(logs.some(([message]) => message.includes('Memory changed CA rule')));
     assert.equal(subject.memory.items.length, 1);
@@ -365,14 +362,14 @@ test('memory detects a three-generation cycle without repeated spatial stripes',
     subject.initialize();
     for (let x = 0; x < 3; x++) {
         for (let y = 0; y < 2; y++) {
-            subject.grid[x][y][0].state = x;
+            subject.grid.set(x, y, 0, x);
         }
     }
     for (let z = 1; z <= 5; z++) {
         subject.step();
     }
-    assert.deepEqual(subject.grid.map(column => column.map(layers => layers[3].state)),
-        subject.grid.map(column => column.map(layers => layers[0].state)));
+    assert.deepEqual(layerStates(subject.grid, 3),
+        layerStates(subject.grid, 0));
     assert.ok(logs.some(([message]) => message.includes('period=3')));
 });
 
@@ -407,7 +404,7 @@ test('memory detects two matching quarter-depth sequences beyond its state-based
     subject.algorithm.lastLayerRuleKeys = [Array(6).fill(null)];
     subject.algorithm.step = (grid, z) => {
         for (let y = 0; y < 6; y++) {
-            grid[0][y][z] = { state: ((z % 48) >> y) & 1 };
+            grid.set(0, y, z, ((z % 48) >> y) & 1);
         }
     };
     for (let z = 1; z < 96; z++) {
@@ -429,7 +426,7 @@ test('periods up to a quarter depth are detected even if the configured run leng
         subject.algorithm.lastLayerRuleKeys = [Array(4).fill(null)];
         subject.algorithm.step = (grid, z) => {
             for (let y = 0; y < 4; y++) {
-                grid[0][y][z] = { state: ((z % period) >> y) & 1 };
+                grid.set(0, y, z, ((z % period) >> y) & 1);
             }
         };
         for (let z = 1; z < period + 15; z++) {
@@ -468,7 +465,7 @@ test('a later longer cycle is reported after an earlier short cycle', () => {
     subject.algorithm.step = (grid, z) => {
         const value = z < 5 ? 0 : ((z - 5) % 16) + 1;
         for (let y = 0; y < 5; y++) {
-            grid[0][y][z] = { state: (value >> y) & 1 };
+            grid.set(0, y, z, (value >> y) & 1);
         }
     };
     for (let z = 1; z < 37; z++) {
@@ -559,7 +556,8 @@ test('memory requires consecutive matches with the same period', () => {
         memory: { enabled: true, capacityMultiplier: 1, matchRunFraction: 2 / 9 }
     });
     const memory = new classes.RowMemory(subject.settings);
-    const grid = [[[0, 1, 0, 2, 0].map(state => ({ state }))]];
+    const grid = new classes.StateGrid(1, 1, 5);
+    [0, 1, 0, 2, 0].forEach((state, z) => grid.set(0, 0, z, state));
     for (let z = 0; z < 5; z++) {
         assert.equal(memory.addLayer(grid, z), false);
     }
@@ -575,7 +573,8 @@ test('memory compares the oldest retained generation before overwriting it', () 
     });
     const memory = new classes.RowMemory(subject.settings);
     const stripes = [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 0]];
-    const grid = [Array.from({ length: 3 }, (_, y) => stripes.map(stripe => ({ state: stripe[y] })))];
+    const grid = new classes.StateGrid(1, 3, stripes.length);
+    stripes.forEach((stripe, z) => stripe.forEach((state, y) => grid.set(0, y, z, state)));
     for (let z = 0; z < 4; z++) {
         assert.equal(memory.addLayer(grid, z), false);
     }
@@ -649,8 +648,7 @@ test('generation count independently controls retained layers and termination', 
                 }
                 assert.equal(subject.step(), null);
                 assert.equal(subject.step(), null);
-                assert.ok(subject.grid.every(column => column.every(layers =>
-                    layers.length === generations && layers.every((cell, z) => cell?.z === z))));
+                assert.equal(subject.grid.layers.length, generations);
                 assert.equal(subject.memory.quarterDepth, Math.floor(depth / 4));
             }
         }
@@ -659,11 +657,16 @@ test('generation count independently controls retained layers and termination', 
 
 test('configured generation count uses grid depth and view preset, and rejects invalid values', () => {
     const { context } = createHarness();
+    vm.runInContext("CONFIG.view.orientation = 'sideways'", context);
+    const sidewaysGenerations = vm.runInContext('CONFIG.simulation.numGenerations', context);
     for (const orientation of ['sideways', 'vertical']) {
         vm.runInContext(`CONFIG.view.orientation = '${orientation}'`, context);
         assert.equal(vm.runInContext('CONFIG.simulation.numGenerations', context),
-            vm.runInContext('1.5 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier', context));
+            sidewaysGenerations * vm.runInContext('CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier', context));
     }
+    vm.runInContext('CONFIG.grid.factor *= 2', context);
+    assert.equal(vm.runInContext('CONFIG.simulation.numGenerations', context),
+        sidewaysGenerations * vm.runInContext('2 * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier', context));
     for (const generations of [0, -1, 1.5, NaN, Infinity, '2', null, undefined, 2147483648]) {
         assert.throws(() => createHarness({ simulation: { numGenerations: generations } }), /simulation\.numGenerations/);
     }
@@ -690,8 +693,7 @@ test('changing generation count preserves shared layers and depth-based memory',
             subject.initialize();
             for (let z = 1; z < 3; z++) subject.step();
             return {
-                layers: plain(subject.grid.map(column => column.map(cells =>
-                    cells.slice(0, 3).map(cell => cell.state)))),
+                layers: Array.from({ length: 3 }, (_, z) => layerStates(subject.grid, z)),
                 capacity: subject.memory.capacity,
                 quarterDepth: subject.memory.quarterDepth
             };
@@ -929,7 +931,7 @@ test('a one-layer simulation completes without generating an out-of-bounds layer
     assert.throws(() => subject.step(), /Initialize/);
     subject.initialize();
     assert.equal(subject.step(), null);
-    assert.ok(subject.grid.every(column => column.every(layers => layers.length === 1)));
+    assert.equal(subject.grid.layers.length, 1);
 });
 
 test('trajectory configuration validates ranges, noise controls, and effective-depth speed before allocation', () => {

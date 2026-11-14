@@ -27,11 +27,11 @@ const CONFIG = {
         maxCellsPerAxisPerLayer: 100,
         forwardProbability: 1.0,
         noiseSpaceScale: 0.01,
-        noiseTimeScale: 0.0,
+        noiseTimeScale: 0.5,
         trajectory: {
-            slope: [0.0, 0.015], // cells per layer
-            bend: [-0.003, 0.003], // change in slope per layer
-            amplitude: [32, 128],
+            slope: [0.0, 0.0], // cells per layer
+            bend: [-0.0015, 0.0015], // change in slope per layer
+            amplitude: [1, 128],
             wavelength: [16, 1024],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
