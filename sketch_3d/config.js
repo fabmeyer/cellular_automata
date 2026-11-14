@@ -15,6 +15,10 @@ const CONFIG = {
         }, // includes the initial layer
         timeInterval: 1
     },
+    coloring: {
+        state0Alpha: null, // null keeps algorithm default; otherwise 0 (transparent) to 1 (opaque)
+        otherStatesAlpha: null // null keeps algorithm default; otherwise 0 (transparent) to 1 (opaque)
+    },
     ca: {
         rule: "sum", // "counts", "sum", "majority"
         neighborhoodSize: 3, // odd side length; includes the center cell
@@ -24,18 +28,18 @@ const CONFIG = {
     pn: {
         mode: "trajectory", // "legacy", "trajectory"
         boundary: "grow", // "wrap", "grow"
-        maxCellsPerAxisPerLayer: 200,
+        maxCellsPerAxisPerLayer: 100,
         forwardProbability: 1.0,
-        noiseSpaceScale: 0.002,
-        noiseTimeScale: 0.02,
+        noiseSpaceScale: 0.00075,
+        noiseTimeScale: 0.5,
         trajectory: {
             slope: [0.0, 0.0], // cells per layer
-            bend: [-0.003, 0.003], // change in slope per layer
-            amplitude: [8, 256],
-            wavelength: [16, 2048],
+            bend: [-0.001, 0.001], // change in slope per layer
+            amplitude: [16, 256],
+            wavelength: [32, 1024],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.002,
+                spaceScale: 0.00075,
                 channels: "shared" // "separate", "shared"
             }
         }
@@ -106,12 +110,17 @@ function resolveConfig(config) {
         requireValue(options.includes(value), `${name} must be one of: ${options.join(", ")}`);
     }
 
-    const { grid, simulation, initial, view, memory } = config;
+    const { grid, simulation, initial, view, memory, coloring } = config;
     positiveInteger(grid.cols, "grid.cols");
     positiveInteger(grid.rows, "grid.rows");
     positiveInteger(grid.baseDepth, "grid.baseDepth");
     positiveNumber(grid.cellSize, "grid.cellSize");
     choice(simulation.algorithm, ["CA", "PN"], "simulation.algorithm");
+    for (const name of ["state0Alpha", "otherStatesAlpha"]) {
+        if (coloring[name] !== null) {
+            probability(coloring[name], `coloring.${name}`);
+        }
+    }
     requireValue(int32(simulation.states) && simulation.states >= 2 && simulation.states <= 9,
         "simulation.states must be an integer between 2 and 9");
     requireValue(float32(simulation.timeInterval) && simulation.timeInterval >= 0 &&

@@ -41,6 +41,26 @@ test('CA and PN render the requested palette for empty and occupied states', () 
     }
 });
 
+test('configured state alpha overrides apply to CA and PN palettes', () => {
+    for (const algorithm of ['CA', 'PN']) {
+        const { subject, classes } = createHarness({
+            grid: { cols: 1, rows: 1 }, simulation: { algorithm, states: 2 },
+            initial: { mode: 'random' }, coloring: { state0Alpha: 0.25, otherStatesAlpha: 0.75 }
+        });
+        const { drawing, calls } = drawingStub();
+        const renderer = new classes.GridRenderer(subject.settings, drawing, () => 0.5);
+        assert.deepEqual(plain(renderer.colors), [
+            'rgba(0, 0, 0, 0.25)', 'rgba(127, 127, 127, 0.75)'
+        ], algorithm);
+        subject.grid.set(0, 0, 0, 0);
+        renderer.drawLayer(subject.grid, 0);
+        subject.grid.set(0, 0, 0, 1);
+        renderer.drawLayer(subject.grid, 0);
+        assert.deepEqual(calls.filter(([name]) => name === 'fill').map(([, color]) => color),
+            ['rgba(0, 0, 0, 0.25)', 'rgba(127, 127, 127, 0.75)'], algorithm);
+    }
+});
+
 test('all 756 algorithm/rule/cycling, initializer, view, memory, and state-count combinations run and render', () => {
     let combinations = 0;
     for (const algorithm of algorithms) {
@@ -452,6 +472,25 @@ test('quarter-depth history uses effective depth in both view orientations', () 
     }
 });
 
+test('color alpha settings accept null or values in [0, 1] and reject out-of-range values', () => {
+    const { classes, config } = createHarness();
+    for (const value of [null, 0, 1, 0.5]) {
+        for (const name of ['state0Alpha', 'otherStatesAlpha']) {
+            config.coloring[name] = value;
+            assert.doesNotThrow(() => classes.resolveConfig(config), name);
+        }
+    }
+    for (const value of [-0.01, 1.01, NaN]) {
+        config.coloring.state0Alpha = null;
+        config.coloring.otherStatesAlpha = null;
+        for (const name of ['state0Alpha', 'otherStatesAlpha']) {
+            config.coloring[name] = value;
+            assert.throws(() => classes.resolveConfig(config), new RegExp(`coloring\\.${name}`), name);
+            config.coloring[name] = null;
+        }
+    }
+});
+
 test('a later longer cycle is reported after an earlier short cycle', () => {
     const { subject, logs } = createHarness({
         grid: { cols: 1, rows: 5, baseDepth: 64 },
@@ -800,15 +839,73 @@ test('default vertical view keeps the original ortho(-420, 420, 840, -840) zoom'
     assert.ok(Math.abs(right - 420) / 420 < 0.01, `half width ${right}`);
 });
 
-test('antialias setting is applied after creating the WebGL canvas', () => {
+test('density and antialias are applied on a small canvas before the requested WebGL allocation', () => {
     for (const antialias of [true, false]) {
         const { subject, classes } = createHarness({ view: { antialias } });
         const { drawing, calls } = drawingStub();
         new classes.GridRenderer(subject.settings, drawing).setup();
         const setAttributesIndex = calls.findIndex(([name]) => name === 'setAttributes');
-        const createCanvasIndex = calls.findIndex(([name]) => name === 'createCanvas');
+        const allocationIndex = calls.findIndex(([name, w, h]) =>
+            name === 'createCanvas' && w === subject.settings.canvasWidth && h === subject.settings.canvasHeight);
         assert.deepEqual(calls[setAttributesIndex], ['setAttributes', 'antialias', antialias]);
-        assert.ok(createCanvasIndex < setAttributesIndex);
+        assert.deepEqual(calls.find(([name]) => name === 'createCanvas'), ['createCanvas', 1, 1, drawing.WEBGL]);
+        assert.ok(setAttributesIndex < allocationIndex);
+        assert.ok(calls.findIndex(([name]) => name === 'pixelDensity') < allocationIndex);
+        assert.deepEqual(calls.find(([name]) => name === 'pixelDensity'), ['pixelDensity', 1]);
+    }
+});
+
+test('WebGL allocation enforces real hardware limits without imposing a 4096 pixel cap', () => {
+    const { subject, classes } = createHarness();
+    const settings = { ...subject.settings, canvasWidth: 5000, canvasHeight: 32 };
+    const supported = drawingStub();
+    new classes.GridRenderer(settings, supported.drawing).setup();
+    assert.ok(supported.calls.some(([name, w, h]) => name === 'createCanvas' && w === 5000 && h === 32));
+    for (const parameter of ['texture', 'renderbuffer', 'viewport']) {
+        const { drawing, calls } = drawingStub();
+        drawing.drawingContext.getParameter = name => name === 'viewport'
+            ? [name === parameter ? 4096 : 16384, 16384] : name === parameter ? 4096 : 16384;
+        assert.throws(() => new classes.GridRenderer(settings, drawing).setup(), /5000.*32.*limit/i);
+        assert.ok(!calls.some(([name, w]) => name === 'createCanvas' && w === 5000));
+    }
+});
+
+test('WebGL allocation reports truncated buffers and allocation errors before shader creation', () => {
+    const { subject, classes } = createHarness();
+    for (const failure of ['dimensions', 1282, 1285, 'lost']) {
+        const { drawing } = drawingStub();
+        const create = drawing.createCanvas;
+        drawing.createCanvas = (...args) => {
+            const result = create(...args);
+            if (args[0] === 1) return result;
+            if (failure === 'dimensions') drawing.canvas.width--;
+            if (typeof failure === 'number') drawing.drawingContext.getError = () => failure;
+            if (failure === 'lost') drawing.drawingContext.isContextLost = () => true;
+            return result;
+        };
+        const renderer = new classes.GridRenderer(subject.settings, drawing);
+        renderer.createInstancing = () => assert.fail('must not initialize shaders after allocation failure');
+        assert.throws(() => renderer.setup(), /WebGL.*(allocation|context|buffer)/i);
+    }
+});
+
+test('context loss during shader use reports the WebGL failure without masking unrelated shader errors', () => {
+    const { subject, classes } = createHarness();
+    subject.initialize();
+    for (const lost of [false, true]) {
+        const { drawing } = drawingStub();
+        const renderer = new classes.GridRenderer(subject.settings, drawing);
+        renderer.setup();
+        renderer.instancing = {
+            states: { pixels: new Uint8Array(subject.settings.grid.cols * subject.settings.grid.rows * 4),
+                updatePixels() {} },
+            shader: { setUniform() {} }, palette: [], cube: {}
+        };
+        drawing.shader = () => {
+            drawing.drawingContext.isContextLost = () => lost;
+            throw new Error('shaderSource failed');
+        };
+        assert.throws(() => renderer.drawLayer(subject.grid, 0), lost ? /WebGL context lost/ : /shaderSource failed/);
     }
 });
 
@@ -822,7 +919,7 @@ test('zoom scales orthographic framing without changing the camera or depth clip
         };
         const baseline = setup(1);
         const camera = baseline.calls.find(([name]) => name === 'camera');
-        const canvas = baseline.calls.find(([name]) => name === 'createCanvas');
+        const canvas = baseline.calls.filter(([name]) => name === 'createCanvas').at(-1).slice(0, 4);
         const ortho = baseline.calls.find(([name]) => name === 'ortho');
         const { grid, depth, preset, canvasWidth, canvasHeight, view } = baseline.settings;
         const { halfX, halfY } = baseline.classes.GridRenderer.projectedHalfExtents(
@@ -836,7 +933,7 @@ test('zoom scales orthographic framing without changing the camera or depth clip
         for (const zoom of [0.5, 2]) {
             const { calls } = setup(zoom);
             assert.deepEqual(calls.find(([name]) => name === 'camera'), camera);
-            assert.deepEqual(calls.find(([name]) => name === 'createCanvas'), canvas);
+            assert.deepEqual(calls.filter(([name]) => name === 'createCanvas').at(-1).slice(0, 4), canvas);
             const scaled = calls.find(([name]) => name === 'ortho');
             for (let i = 1; i <= 4; i++) {
                 assert.equal(scaled[i], ortho[i] / zoom);

@@ -24219,7 +24219,8 @@ var p5 = (function() {
 			this._isMainCanvas = isMainCanvas;
 			this.pixels = [];
 			const defaultRatio = typeof window !== "undefined" ? Math.ceil(window.devicePixelRatio) : 1;
-			if (isMainCanvas) this._pixelDensity = defaultRatio;
+			// Preserve explicit density when createCanvas replaces the main renderer.
+			if (isMainCanvas) this._pixelDensity = pInst._renderer?._pixelDensity ?? defaultRatio;
 			else {
 				const parentDensity = pInst._pInst?._renderer?._pixelDensity;
 				this._pixelDensity = parentDensity || defaultRatio;

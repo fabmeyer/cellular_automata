@@ -9,6 +9,7 @@ const MIME_TYPES = {
     '.css': 'text/css; charset=utf-8',
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
     '.png': 'image/png',
     '.svg': 'image/svg+xml'
 };
@@ -200,7 +201,15 @@ async function main() {
         await fitViewportToCanvas(page, dimensions);
         await page.evaluate(() => new Promise(resolve =>
             requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const checkRendering = () => {
+            if (window.simulationError) {
+                throw new Error(window.simulationError);
+            }
+            renderer.assertContext();
+        };
+        await page.evaluate(checkRendering);
         const image = await canvas.screenshot({ type: 'png' });
+        await page.evaluate(checkRendering);
         await fsp.mkdir(path.dirname(outputPath), { recursive: true });
         await fsp.writeFile(outputPath, image, { flag: 'wx' });
         console.log(`Saved ${dimensions.width}x${dimensions.height} PNG to ${outputPath}`);

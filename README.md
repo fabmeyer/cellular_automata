@@ -4,8 +4,21 @@ A p5.js visualization of successive 2D generations stacked into a 3D volume.
 
 ## Getting started
 
-Open [index.html](./index.html) in a browser. No installation, build step, or
-server is required. A local server (such as VS Code Live Server) also works.
+Serve the project over HTTP, then open the printed localhost URL in Safari or
+another browser:
+
+```bash
+npm start
+```
+
+No build step is required. Stop the server with Ctrl+C. VS Code Live Server also
+works. Do not open [index.html](./index.html) directly via `file://`: Safari blocks
+p5's fetches for locale data and sketch diagnostics, which can also trigger a
+failed locale CDN fallback.
+
+Local `en-GB.json` and `de-DE.json` contain no translation overrides, so p5 uses
+its built-in English diagnostics for these locales without requesting missing
+CDN translations.
 
 **Change settings only in [sketch_3d/config.js](./sketch_3d/config.js), then reload.**
 There are no live controls. `setup()` validates active settings before allocating
@@ -45,6 +58,7 @@ for memory findings and observability details.
 | `simulation.states` | Integer 2 through 9, including empty state **0** | `9` |
 | `simulation.numGenerations` | Positive integer total layer count, including the initial plane | 1.75 times effective view depth |
 | `simulation.timeInterval` | Nonnegative delay between generations, in ms | `1` |
+| `coloring.state0Alpha`, `coloring.otherStatesAlpha` | Optional alpha for state 0 and states 1+; `null` keeps the algorithm default; otherwise 0 is transparent and 1 is opaque | `null`, `null` |
 | `ca.rule` | `"counts"`, `"sum"`, `"majority"` | `"majority"` |
 | `ca.neighborhoodSize` | Positive odd side length; independent of seed size | `9` |
 | `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.67` |
@@ -83,6 +97,16 @@ precision. Existing per-setting limits still apply, such as states 2 through 9,
 probabilities from 0 to 1, and background values from 0 to 255. Values within
 these numeric ranges can still exceed available browser memory or rendering
 capacity.
+
+Rendering uses pixel density 1, including on Retina displays and in headless
+exports. Canvas dimensions remain the requested `grid` size times the selected
+view's `canvasScale`; there is no arbitrary edge or megapixel cap and no automatic
+downscaling. The renderer checks actual WebGL texture, renderbuffer, and viewport
+limits before allocating the full canvas. GPU memory can still run out within
+those limits, especially with `view.antialias: true`. Allocation failures or
+context loss stop the simulation with a descriptive error instead of continuing
+into shader errors. Reduce `canvasScale` or explicitly set `view.antialias: false`
+if necessary; neither changes the simulation's grid or generation count.
 
 For example, select majority-voting CA by changing `simulation.algorithm` to
 `"CA"` and `ca.rule` to `"majority"`. To place a symmetric seed in the center,
@@ -338,9 +362,11 @@ float32 values; invalid settings raise an error during startup.
 Changing view changes presentation and, with the current getter, generation
 count; it does not change shared-generation evolution.
 
-Colors are fixed by algorithm: CA draws state 0 as `rgba(0, 0, 0, 0.5)` and
-other states as opaque random RGB colors. PN draws state 0 as
-`rgba(0, 0, 0, 0.05)` and other states as random RGB colors with opacity `0.95`.
+By default, CA draws state 0 with alpha `0.5` and other states opaque; PN draws
+state 0 with alpha `0.05` and other states with alpha `0.95`. Set
+`coloring.state0Alpha` and `coloring.otherStatesAlpha` to numbers from 0 to 1 to
+override those defaults for either algorithm. Alpha 0 is fully transparent and
+alpha 1 is fully opaque.
 
 Memory stores the **x=0 row**, not the entire plane. It uses a bounded ring,
 hashes followed by exact row comparisons, and looks for consecutive matches at

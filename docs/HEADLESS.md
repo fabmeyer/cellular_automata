@@ -25,6 +25,26 @@ Output paths are resolved relative to the current working directory. The output
 directory is created when necessary, and an existing file is never overwritten.
 The output must have a `.png` extension.
 
+Both interactive rendering and PNG export use pixel density 1. The requested
+canvas dimensions are preserved even on Retina displays, without an arbitrary
+maximum edge length or pixel budget. Requests beyond actual WebGL texture,
+renderbuffer, or viewport limits fail explicitly rather than being silently
+clamped. Within those limits, a large canvas can still exceed available GPU
+memory; antialiasing increases the allocation cost. Reduce the selected view's
+`canvasScale` or explicitly turn `view.antialias` off when necessary.
+Allocation errors and context loss stop the run; context health is also checked
+before and after screenshot capture so a detected failure cannot produce a
+success-shaped PNG.
+
+The renderer probes hardware limits on a small canvas, then supplies a pre-sized
+canvas to p5's `createCanvas()` rather than resizing the live WebGL drawing
+buffer. Chromium can apply a roughly 33-megapixel area limit during resize even
+when a fresh context supports the requested dimensions. The bundled
+[`js/p5.js`](../js/p5.js) has a local fix to preserve explicitly selected pixel
+density when replacing the main renderer. Preserve and retest that fix when
+refreshing the bundle; otherwise Retina scaling can change the requested bitmap
+size. Resolution, zoom, camera settings, and antialiasing are not reduced.
+
 The runner starts a temporary server bound to localhost, opens the existing
 `index.html`, and uses the current [`sketch_3d/config.js`](../sketch_3d/config.js).
 The sketch signals completion only after drawing the last configured

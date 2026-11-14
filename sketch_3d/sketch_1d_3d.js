@@ -62,6 +62,16 @@ let renderer;
 globalThis.simulationDone = false;
 globalThis.simulationError = null;
 let nextProgressPercent = 10;
+let frameTimer = null;
+
+function recordSimulationError(error) {
+    globalThis.simulationDone = false;
+    globalThis.simulationError = error instanceof Error ? error.stack : String(error);
+    if (frameTimer !== null) {
+        clearTimeout(frameTimer);
+        frameTimer = null;
+    }
+}
 
 function reportSimulationProgress() {
     if (typeof globalThis.onSimulationProgress !== "function") {
@@ -89,35 +99,51 @@ function setup() {
     try {
         simulation = new Simulation(CONFIG);
         renderer = new GridRenderer(simulation.settings);
-        renderer.setup();
+        renderer.setup(error => {
+            recordSimulationError(error);
+            console.error(error);
+        });
         simulation.initialize();
         renderer.drawLayer(simulation.grid, 0);
+        renderer.assertContext();
+        if (globalThis.simulationError !== null) {
+            return;
+        }
         reportSimulationProgress();
         if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
-            setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
+            frameTimer = setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
         } else {
             globalThis.simulationDone = true;
         }
     } catch (error) {
-        globalThis.simulationError = error instanceof Error ? error.stack : String(error);
+        recordSimulationError(error);
         throw error;
     }
 }
 
 function nextFrame() {
+    frameTimer = null;
+    if (globalThis.simulationError !== null) {
+        return;
+    }
     try {
+        renderer.assertContext();
         const z = simulation.step();
         if (z !== null) {
             renderer.drawLayer(simulation.grid, z);
+            renderer.assertContext();
+            if (globalThis.simulationError !== null) {
+                return;
+            }
             reportSimulationProgress();
         }
         if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
-            setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
+            frameTimer = setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
         } else {
             globalThis.simulationDone = true;
         }
     } catch (error) {
-        globalThis.simulationError = error instanceof Error ? error.stack : String(error);
+        recordSimulationError(error);
         throw error;
     }
 }

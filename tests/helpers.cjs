@@ -58,13 +58,39 @@ function seededRandom(seed = 123) {
 
 function drawingStub() {
     const calls = [];
-    const drawing = { WEBGL: 'WEBGL', height: 0 };
-    for (const name of ['setAttributes', 'createCanvas', 'camera', 'ortho', 'background', 'noLoop', 'noStroke', 'noLights',
+    let canvas = new EventTarget();
+    canvas.ownerDocument = {
+        createElement() {
+            const element = new EventTarget();
+            element.ownerDocument = this;
+            return element;
+        }
+    };
+    const drawing = { WEBGL: 'WEBGL', height: 0, canvas };
+    drawing.drawingContext = {
+        canvas, MAX_TEXTURE_SIZE: 'texture', MAX_RENDERBUFFER_SIZE: 'renderbuffer',
+        MAX_VIEWPORT_DIMS: 'viewport', NO_ERROR: 0,
+        getParameter: name => name === 'viewport' ? [16384, 16384] : 16384,
+        isContextLost: () => false,
+        getError: () => 0,
+        get drawingBufferWidth() { return canvas.width; },
+        get drawingBufferHeight() { return canvas.height; }
+    };
+    for (const name of ['setAttributes', 'pixelDensity', 'createCanvas', 'resizeCanvas', 'camera', 'ortho', 'background', 'noLoop', 'noStroke', 'noLights',
         'ambientLight', 'push', 'pop', 'rotateX', 'rotateY', 'rotateZ', 'fill', 'translate', 'box']) {
         drawing[name] = (...args) => {
             calls.push([name, ...args]);
-            if (name === 'createCanvas') {
+            if (name === 'createCanvas' && args[3]) {
+                canvas = drawing.canvas = args[3];
+                drawing.drawingContext.canvas = canvas;
+            }
+            if (name === 'createCanvas' || name === 'resizeCanvas') {
+                drawing.width = canvas.width = args[0];
+                canvas.height = args[1];
                 drawing.height = args[1];
+            }
+            if (name === 'createCanvas') {
+                return { elt: canvas };
             }
         };
     }

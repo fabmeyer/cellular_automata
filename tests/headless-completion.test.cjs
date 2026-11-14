@@ -18,7 +18,8 @@ function prepareSmallSimulation(numGenerations) {
             view: { ...CONFIG.view, orientation: "sideways" }
         });
         GridRenderer = class {
-            setup() {}
+            setup(onContextLost) { this.onContextLost = onContextLost; }
+            assertContext() {}
             drawLayer() {}
         };
     `, context);
@@ -36,6 +37,34 @@ test('headless completion is signaled only after the configured final generation
     timers.shift()();
     assert.equal(context.simulationDone, true);
     assert.equal(context.simulationError, null);
+});
+
+test('context loss stops pending frames and clears completion after the final layer', () => {
+    for (const generations of [1, 3]) {
+        const { context, timers } = prepareSmallSimulation(generations);
+        context.clearTimeout = () => {};
+        context.console = { ...context.console, error() {} };
+        vm.runInContext('setup()', context);
+        const completed = vm.runInContext('simulation.nextZ', context);
+        vm.runInContext('renderer.onContextLost(new Error("WebGL context lost"))', context);
+        while (timers.length > 0) timers.shift()();
+        assert.equal(vm.runInContext('simulation.nextZ', context), completed);
+        assert.equal(context.simulationDone, false);
+        assert.match(context.simulationError, /WebGL context lost/);
+    }
+});
+
+test('context loss during the final draw cannot report successful completion', () => {
+    const { context } = prepareSmallSimulation(1);
+    context.console = { ...context.console, error() {} };
+    vm.runInContext(`
+        GridRenderer.prototype.drawLayer = function() {
+            this.onContextLost(new Error("WebGL context lost during drawing"));
+        };
+    `, context);
+    vm.runInContext('setup()', context);
+    assert.equal(context.simulationDone, false);
+    assert.match(context.simulationError, /context lost during drawing/);
 });
 
 test('headless completion is signaled for a single-layer simulation', () => {
