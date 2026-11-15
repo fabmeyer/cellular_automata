@@ -13,6 +13,8 @@ const CONFIG = {
         get numGenerations() {
             return 1.75 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
         }, // includes the initial layer
+        retainHistory: false, // true keeps all simulated layers in memory
+        seed: 1268502912, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
         timeInterval: 1
     },
     coloring: {
@@ -30,16 +32,16 @@ const CONFIG = {
         boundary: "grow", // "wrap", "grow"
         maxCellsPerAxisPerLayer: 100,
         forwardProbability: 1.0,
-        noiseSpaceScale: 0.00075,
-        noiseTimeScale: 0.5,
+        noiseSpaceScale: 0.02,
+        noiseTimeScale: 0.2,
         trajectory: {
             slope: [0.0, 0.0], // cells per layer
-            bend: [-0.001, 0.001], // change in slope per layer
-            amplitude: [16, 256],
-            wavelength: [32, 1024],
+            bend: [-0.002, 0.002], // change in slope per layer
+            amplitude: [4, 64],
+            wavelength: [16, 1024],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.00075,
+                spaceScale: 0.02,
                 channels: "shared" // "separate", "shared"
             }
         }
@@ -47,7 +49,7 @@ const CONFIG = {
     initial: {
         mode: "seed", // "random", "seed"
         patternSize: 32,
-        resolutionFactor: 1, // same-state block side length; must divide patternSize in seed mode
+        resolutionFactor: 2, // same-state block side length; must divide patternSize in seed mode
         symmetry: "D4", // "plain", "D4"
         placement: "tiled", // "tiled", "center", "corners"
         loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
@@ -111,7 +113,54 @@ function resolveConfig(config) {
         requireValue(options.includes(value), `${name} must be one of: ${options.join(", ")}`);
     }
 
-    const { grid, simulation, initial, view, memory, coloring } = config;
+    const { grid, simulation, view, memory, coloring } = config;
+    const factor = Object.hasOwn(grid, "factor") ? grid.factor : 1;
+    const seed = Object.hasOwn(simulation, "seed") ? simulation.seed : null;
+    positiveInteger(factor, "grid.factor");
+    const scale = (value, multiplier) => typeof value === "number" ? value * multiplier : value;
+    const scaleRange = (range, multiplier) => Array.isArray(range)
+        ? range.map(value => scale(value, multiplier)) : range;
+    positiveInteger(config.initial.resolutionFactor, "initial.resolutionFactor");
+    if (config.initial.mode === "seed") {
+        positiveInteger(config.initial.patternSize, "initial.patternSize");
+    }
+    const initial = {
+        ...config.initial,
+        patternSize: scale(config.initial.patternSize, factor),
+        resolutionFactor: scale(config.initial.resolutionFactor, factor)
+    };
+    let pn = config.pn;
+    if (simulation.algorithm === "PN") {
+        nonnegativeNumber(pn.noiseSpaceScale, "pn.noiseSpaceScale");
+        nonnegativeNumber(pn.noiseTimeScale, "pn.noiseTimeScale");
+        pn = {
+            ...pn,
+            noiseSpaceScale: scale(pn.noiseSpaceScale, 1 / factor),
+            noiseTimeScale: scale(pn.noiseTimeScale, 1 / factor)
+        };
+        if (pn.mode === "trajectory" && pn.trajectory && typeof pn.trajectory === "object") {
+            const trajectory = pn.trajectory;
+            for (const name of TRAJECTORY_PARAMETERS) {
+                const range = trajectory[name];
+                requireValue(Array.isArray(range) && range.length === 2 && range.every(float32) &&
+                    range[0] <= range[1],
+                    `pn.trajectory.${name} must be an ordered pair of finite float32 numbers`);
+            }
+            if (trajectory.parameterNoise && typeof trajectory.parameterNoise === "object") {
+                nonnegativeNumber(trajectory.parameterNoise.spaceScale, "pn.trajectory.parameterNoise.spaceScale");
+            }
+            pn.trajectory = {
+                ...trajectory,
+                bend: scaleRange(trajectory.bend, 1 / factor),
+                amplitude: scaleRange(trajectory.amplitude, factor),
+                wavelength: scaleRange(trajectory.wavelength, factor),
+                parameterNoise: trajectory.parameterNoise && typeof trajectory.parameterNoise === "object"
+                    ? { ...trajectory.parameterNoise,
+                        spaceScale: scale(trajectory.parameterNoise.spaceScale, 1 / factor) }
+                    : trajectory.parameterNoise
+            };
+        }
+    }
     positiveInteger(grid.cols, "grid.cols");
     positiveInteger(grid.rows, "grid.rows");
     positiveInteger(grid.baseDepth, "grid.baseDepth");
@@ -124,6 +173,10 @@ function resolveConfig(config) {
     }
     requireValue(int32(simulation.states) && simulation.states >= 2 && simulation.states <= 9,
         "simulation.states must be an integer between 2 and 9");
+    requireValue(typeof simulation.retainHistory === "boolean", "simulation.retainHistory must be boolean");
+    requireValue(seed === null || (Number.isInteger(seed) &&
+        seed >= 0 && seed <= 4294967295),
+        "simulation.seed must be null or an unsigned 32-bit integer");
     requireValue(float32(simulation.timeInterval) && simulation.timeInterval >= 0 &&
         simulation.timeInterval <= INT32_MAX, "simulation.timeInterval must be between 0 and 2147483647 ms");
 
@@ -152,24 +205,26 @@ function resolveConfig(config) {
         if (ca.rule !== "majority") {
             probability(ca.emptyStateProbability, "ca.emptyStateProbability");
         }
-    } else {
-        choice(config.pn.mode, ["legacy", "trajectory"], "pn.mode");
-        choice(config.pn.boundary, ["wrap", "grow"], "pn.boundary");
-        positiveInteger(config.pn.maxCellsPerAxisPerLayer, "pn.maxCellsPerAxisPerLayer");
-        probability(config.pn.forwardProbability, "pn.forwardProbability");
-        nonnegativeNumber(config.pn.noiseSpaceScale, "pn.noiseSpaceScale");
-        nonnegativeNumber(config.pn.noiseTimeScale, "pn.noiseTimeScale");
+    } else if (simulation.algorithm === "PN") {
+        choice(pn.mode, ["legacy", "trajectory"], "pn.mode");
+        choice(pn.boundary, ["wrap", "grow"], "pn.boundary");
+        positiveInteger(pn.maxCellsPerAxisPerLayer, "pn.maxCellsPerAxisPerLayer");
+        probability(pn.forwardProbability, "pn.forwardProbability");
+        nonnegativeNumber(pn.noiseSpaceScale, "pn.noiseSpaceScale");
+        nonnegativeNumber(pn.noiseTimeScale, "pn.noiseTimeScale");
     }
     requireValue(typeof memory.enabled === "boolean", "memory.enabled must be boolean");
     let memoryCapacity = 0;
     let matchRunLength = 0;
     if (memory.enabled) {
         positiveInteger(memory.capacityMultiplier, "memory.capacityMultiplier");
-        memoryCapacity = memory.capacityMultiplier * simulation.states ** 2;
+        memoryCapacity = memory.capacityMultiplier * simulation.states ** 2 * factor;
         positiveInteger(memoryCapacity, "memory capacity");
         probability(memory.matchRunFraction, "memory.matchRunFraction");
         requireValue(memory.matchRunFraction > 0, "memory.matchRunFraction must be greater than 0");
-        matchRunLength = Math.max(1, Math.floor(memoryCapacity * memory.matchRunFraction));
+        matchRunLength = Math.max(1,
+            Math.floor(memory.capacityMultiplier * simulation.states ** 2 * memory.matchRunFraction)) * factor;
+        positiveInteger(matchRunLength, "memory match run length");
     }
     choice(view.orientation, ["sideways", "vertical"], "view.orientation");
     const preset = view.presets[view.orientation];
@@ -191,8 +246,8 @@ function resolveConfig(config) {
     positiveInteger(generations, "simulation.numGenerations");
     requireValue(float32(generations * grid.cellSize),
         "simulation.numGenerations and grid.cellSize must produce finite float32 layer positions");
-    if (simulation.algorithm === "PN" && config.pn.mode === "trajectory") {
-        const trajectory = config.pn.trajectory;
+    if (simulation.algorithm === "PN" && pn.mode === "trajectory") {
+        const trajectory = pn.trajectory;
         requireValue(trajectory && typeof trajectory === "object",
             "pn.trajectory must contain parameter ranges");
         for (const name of TRAJECTORY_PARAMETERS) {
@@ -217,12 +272,12 @@ function resolveConfig(config) {
         console.log("PN trajectory movement bound (cells per axis per layer):", {
             speedBound,
             minimumIntegerLimit: Math.max(1, Math.ceil(speedBound)),
-            configuredLimit: config.pn.maxCellsPerAxisPerLayer,
+            configuredLimit: pn.maxCellsPerAxisPerLayer,
             numGenerations: generations
         });
-        requireValue(speedBound <= config.pn.maxCellsPerAxisPerLayer,
+        requireValue(speedBound <= pn.maxCellsPerAxisPerLayer,
             `pn.trajectory speed bound ${speedBound} must not exceed pn.maxCellsPerAxisPerLayer ` +
-            `(${config.pn.maxCellsPerAxisPerLayer}): maxSlope + maxAbsBend * (generations - 1) + ` +
+            `(${pn.maxCellsPerAxisPerLayer}): maxSlope + maxAbsBend * (generations - 1) + ` +
             "2 * PI * maxAmplitude / minWavelength <= pn.maxCellsPerAxisPerLayer");
     }
     if (memory.enabled) {
@@ -234,6 +289,6 @@ function resolveConfig(config) {
     positiveInteger(canvasHeight, "canvas height");
     requireValue(float32(Math.hypot(grid.cols, grid.rows, depth) * grid.cellSize * view.cameraPadding),
         "grid and view dimensions must produce finite float32 camera bounds");
-    return { ...config, simulation: { ...simulation, numGenerations: generations }, depth, preset,
+    return { ...config, initial, pn, simulation: { ...simulation, seed, numGenerations: generations }, depth, preset,
         canvasWidth, canvasHeight, memoryCapacity, matchRunLength };
 }

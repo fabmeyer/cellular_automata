@@ -2,6 +2,52 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createHarness, plain, layerStates, seededRandom, drawingStub } = require('./helpers.cjs');
 
+test('factor scaling preserves normalized noise samples and trajectory displacement', () => {
+    const make = factor => {
+        const samples = [];
+        const harness = createHarness({
+            grid: { factor, cols: 8 * factor, rows: 8 * factor, baseDepth: 8 * factor },
+            simulation: { algorithm: 'PN', states: 2, numGenerations: 16 * factor },
+            initial: { mode: 'random' }, memory: { enabled: false },
+            pn: {
+                mode: 'trajectory', maxCellsPerAxisPerLayer: 100,
+                noiseSpaceScale: 0.08, noiseTimeScale: 0.12,
+                trajectory: {
+                    slope: [0.25, 0.25], bend: [0.002, 0.002], amplitude: [1.5, 1.5],
+                    wavelength: [8, 8], phase: [0.3, 0.3],
+                    parameterNoise: { spaceScale: 0.04, channels: 'separate' }
+                }
+            }
+        }, { noise: (...coords) => { samples.push(coords); return 0.5; } });
+        return { ...harness, samples };
+    };
+    const base = make(1);
+    const refined = make(4);
+    const direction = base.subject.algorithm.perlinDirection(2, 3, 7);
+    refined.subject.algorithm.perlinDirection(8, 12, 28);
+    const baseTrajectory = base.subject.algorithm.sampleTrajectory(2, 3, direction);
+    const refinedTrajectory = refined.subject.algorithm.sampleTrajectory(8, 12, direction);
+    assert.deepEqual(base.samples, refined.samples);
+    for (const z of [1, 3, 7]) {
+        const a = base.subject.algorithm.trajectoryMovement(baseTrajectory, z);
+        const b = refined.subject.algorithm.trajectoryMovement(refinedTrajectory, z * 4);
+        for (let axis = 0; axis < 2; axis++) {
+            assert.ok(Math.abs(b.trajectory.offset[axis] - 4 * a.trajectory.offset[axis]) < 1e-10);
+            assert.ok(Math.abs(Math.trunc(b.trajectory.offset[axis]) / 4 -
+                Math.trunc(a.trajectory.offset[axis])) < 1);
+        }
+    }
+    for (const [run, x, y, z] of [[base, 2, 3, 4], [refined, 8, 12, 13]]) {
+        const { grid, algorithm } = run.subject;
+        grid.set(x, y, 0, 1);
+        algorithm.initialize(grid);
+        grid.set(x, y, z - 1, 1);
+        run.samples.length = 0;
+        algorithm.step(grid, z);
+    }
+    assert.deepEqual(base.samples, refined.samples);
+});
+
 function simulation(probability = 0.5, stateCount = 2, memoryEnabled = false, limit = 1) {
     let phase = 0;
     let noiseValue = () => 0;

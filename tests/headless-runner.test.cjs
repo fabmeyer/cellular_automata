@@ -67,6 +67,118 @@ test('Chromium resource errors without console arguments are still reported', as
     assert.deepEqual(messages, [['[Chromium]', 'Failed to load resource']]);
 });
 
+test('Chromium forwarding retains complete parseable startup JSON', async t => {
+    const messages = [];
+    t.mock.method(console, 'log', (...args) => messages.push(args));
+    const record = { simulation: { seed: 0 }, algorithm: { trajectory: { amplitude: [4, 8] } } };
+    await forwardConsoleMessage({
+        type: () => 'log',
+        args: () => [
+            { jsonValue: async () => 'Simulation settings:' },
+            { jsonValue: async () => JSON.stringify(record) }
+        ]
+    });
+    assert.deepEqual(messages[0].slice(0, 2), ['[Chromium]', 'Simulation settings:']);
+    assert.deepEqual(JSON.parse(messages[0][2]), record);
+});
+
+test('seeded browser runs repeat at factors 1 and 4 with aligned initial patterns and colors', async t => {
+    const forwarded = [];
+    t.mock.method(console, 'log', (...args) => forwarded.push(args));
+    const server = createLocalServer();
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const browser = await puppeteer.launch({ headless: true });
+    t.after(() => browser.close());
+
+    async function run(factor, seed = 123) {
+        const page = await browser.newPage();
+        const records = [];
+        const pending = [];
+        page.on('console', message => {
+            const text = message.text();
+            const prefix = 'Simulation settings: ';
+            if (text.startsWith(prefix)) {
+                records.push(JSON.parse(text.slice(prefix.length)));
+                pending.push(forwardConsoleMessage(message));
+            }
+        });
+        try {
+            await page.evaluateOnNewDocument(({ factor, seed }) => {
+                window.addEventListener('DOMContentLoaded', () => {
+                    CONFIG.grid = { factor, cols: 4 * factor, rows: 4 * factor,
+                        baseDepth: 4 * factor, cellSize: 2 };
+                    CONFIG.simulation = { ...CONFIG.simulation, algorithm: 'PN', states: 3, seed,
+                        numGenerations: 3 * factor, retainHistory: true, timeInterval: 0 };
+                    CONFIG.initial = { ...CONFIG.initial, mode: 'random', resolutionFactor: 1 };
+                    CONFIG.pn = { ...CONFIG.pn, mode: 'trajectory', boundary: 'wrap',
+                        forwardProbability: 1, maxCellsPerAxisPerLayer: 10,
+                        trajectory: { slope: [0.25, 0.25], bend: [0, 0], amplitude: [0, 0],
+                            wavelength: [4, 4], phase: [0, 0],
+                            parameterNoise: { spaceScale: 0.1, channels: 'shared' } } };
+                    CONFIG.memory.enabled = false;
+                    CONFIG.view.orientation = 'sideways';
+                    CONFIG.view.presets.sideways.canvasScale = [1, 1];
+                });
+            }, { factor, seed });
+            await page.goto(origin);
+            await page.waitForFunction(() => window.simulationDone || window.simulationError, { timeout: 30000 });
+            const result = await page.evaluate(() => {
+                if (window.simulationError) throw new Error(window.simulationError);
+                return {
+                    layers: simulation.grid.layers.map(layer => Array.from(layer)),
+                    colors: renderer.colors,
+                    noiseSample: noise(0.25, 0.5, 0.75),
+                    width: renderer.gl.canvas.width,
+                    height: renderer.gl.canvas.height,
+                    image: renderer.gl.canvas.toDataURL()
+                };
+            });
+            await Promise.all(pending);
+            assert.equal(records.length, 1);
+            return { ...result, record: records[0] };
+        } finally {
+            await page.close();
+        }
+    }
+
+    const base = await run(1);
+    const refined = await run(4);
+    function withoutTimestamp(result) {
+        const { timestamp, ...record } = result.record;
+        assert.equal(new Date(timestamp).toISOString(), timestamp);
+        return { ...result, record };
+    }
+    assert.deepEqual(withoutTimestamp(await run(1)), withoutTimestamp(base));
+    assert.deepEqual(withoutTimestamp(await run(4)), withoutTimestamp(refined));
+    assert.deepEqual(refined.colors, base.colors);
+    assert.equal(refined.noiseSample, base.noiseSample);
+    assert.equal(refined.width, base.width * 4);
+    assert.equal(refined.height, base.height * 4);
+    assert.equal(base.record.simulation.seedSource, 'configured');
+    assert.equal(refined.record.grid.factor, 4);
+    for (let x = 0; x < 4; x++) {
+        for (let y = 0; y < 4; y++) {
+            assert.equal(refined.layers[0][(x * 4) * 16 + y * 4], base.layers[0][x * 4 + y]);
+        }
+    }
+    const generated = await run(1, null);
+    assert.equal(generated.record.simulation.seedSource, 'generated');
+    assert.ok(Number.isInteger(generated.record.simulation.seed));
+    const replay = await run(1, generated.record.simulation.seed);
+    assert.equal(replay.record.simulation.seedSource, 'configured');
+    for (const key of ['layers', 'colors', 'noiseSample', 'width', 'height', 'image']) {
+        assert.deepEqual(replay[key], generated[key], key);
+    }
+    const records = forwarded.filter(([prefix, label]) =>
+        prefix === '[Chromium]' && label === 'Simulation settings:');
+    assert.equal(records.length, 6);
+    assert.deepEqual(JSON.parse(records[4][2]), generated.record);
+    assert.deepEqual(JSON.parse(records[5][2]), replay.record);
+});
+
 test('GridRenderer applies antialiasing to the p5 WebGL context', async t => {
     const server = createLocalServer();
     t.after(() => new Promise((resolve, reject) =>
@@ -110,7 +222,7 @@ test('GridRenderer applies antialiasing to the p5 WebGL context', async t => {
     }
 });
 
-test('HTTP sketch keeps exact large dimensions at both display densities and reports real context loss', async t => {
+test('HTTP sketch honors history settings, keeps exact dimensions at both densities and reports context loss', async t => {
     const server = createLocalServer();
     t.after(() => new Promise(resolve => server.close(resolve)));
     server.listen(0, '127.0.0.1');
@@ -119,9 +231,9 @@ test('HTTP sketch keeps exact large dimensions at both display densities and rep
     const browser = await puppeteer.launch({ headless: true });
     t.after(() => browser.close());
 
-    for (const [deviceScaleFactor, language, canvasWidth, canvasHeight] of [
-        [1, 'en-GB', 5000, 32],
-        [2, 'de-DE', 6144, 12288]
+    for (const [deviceScaleFactor, language, canvasWidth, canvasHeight, retainHistory] of [
+        [1, 'en-GB', 5000, 32, false],
+        [2, 'de-DE', 6144, 12288, true]
     ]) {
         const page = await browser.newPage();
         const errors = [];
@@ -134,12 +246,14 @@ test('HTTP sketch keeps exact large dimensions at both display densities and rep
         page.on('requestfailed', request => failures.push(request.url()));
         page.on('response', response => responses.push([response.url(), response.status()]));
         await page.setViewport({ width: 800, height: 600, deviceScaleFactor });
-        await page.evaluateOnNewDocument(({ language, canvasWidth, canvasHeight }) => {
+        await page.evaluateOnNewDocument(({ language, canvasWidth, canvasHeight, retainHistory }) => {
             Object.defineProperty(navigator, 'language', { get: () => language });
             localStorage.clear();
             window.addEventListener('DOMContentLoaded', () => {
                 CONFIG.grid = { cols: 2, rows: 2, baseDepth: 2, cellSize: 1 };
-                CONFIG.simulation = { algorithm: 'PN', states: 2, numGenerations: 3, timeInterval: 0 };
+                CONFIG.simulation = {
+                    ...CONFIG.simulation, algorithm: 'PN', states: 2, numGenerations: 3, timeInterval: 0, retainHistory
+                };
                 CONFIG.pn.mode = 'legacy';
                 CONFIG.pn.boundary = 'wrap';
                 CONFIG.initial.mode = 'random';
@@ -147,7 +261,7 @@ test('HTTP sketch keeps exact large dimensions at both display densities and rep
                 CONFIG.view.orientation = 'sideways';
                 CONFIG.view.presets.sideways.canvasScale = [canvasWidth / 2, canvasHeight / 2];
             });
-        }, { language, canvasWidth, canvasHeight });
+        }, { language, canvasWidth, canvasHeight, retainHistory });
         const localeResponse = page.waitForResponse(response => response.url() === `${origin}/${language}.json`);
         await page.goto(origin, { waitUntil: 'load' });
         await localeResponse;
@@ -156,9 +270,10 @@ test('HTTP sketch keeps exact large dimensions at both display densities and rep
             error: window.simulationError, density: pixelDensity(),
             width: drawingContext.drawingBufferWidth, height: drawingContext.drawingBufferHeight,
             canvasWidth: drawingContext.canvas.width, canvasHeight: drawingContext.canvas.height,
-            antialias: drawingContext.getContextAttributes().antialias, canvases: document.querySelectorAll('canvas').length
+            antialias: drawingContext.getContextAttributes().antialias, canvases: document.querySelectorAll('canvas').length,
+            firstLayerRetained: simulation.grid.layers[0] !== null
         })), { error: null, density: 1, width: canvasWidth, height: canvasHeight,
-            canvasWidth, canvasHeight, antialias: true, canvases: 1 });
+            canvasWidth, canvasHeight, antialias: true, canvases: 1, firstLayerRetained: retainHistory });
         assert.deepEqual(errors, []);
         assert.deepEqual(failures, []);
         assert.ok(responses.some(([url, status]) => url === `${origin}/${language}.json` && status === 200));

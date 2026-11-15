@@ -49,41 +49,47 @@ for memory findings and observability details.
 
 ## Central configuration
 
+See [CONFIG.md](./docs/CONFIG.md) for the complete parameter reference, factor
+scaling, and reproducible-seed behavior.
+
 | Setting | Meaning / options | Default |
 | --- | --- | --- |
-| `grid.cols`, `grid.rows` | Positive integer plane dimensions | `96`, `96` |
+| `grid.factor` | Positive integer resolution multiplier | See config |
+| `grid.cols`, `grid.rows` | Positive integer plane dimensions | `96 * grid.factor` each |
 | `grid.baseDepth` | Sideways camera framing depth in layers | `192 * grid.factor` |
 | `grid.cellSize` | Positive cube size | `4` |
 | `simulation.algorithm` | `"CA"` or `"PN"` | `"PN"` |
 | `simulation.states` | Integer 2 through 9, including empty state **0** | `9` |
 | `simulation.numGenerations` | Positive integer total layer count, including the initial plane | 1.75 times effective view depth |
+| `simulation.retainHistory` | Keep all CPU layer states when `true`; release consumed layers when `false` | `false` |
+| `simulation.seed` | Unsigned 32-bit integer for repeatable randomness, or `null` for a fresh generated seed | See config |
 | `simulation.timeInterval` | Nonnegative delay between generations, in ms | `1` |
 | `coloring.state0Alpha`, `coloring.otherStatesAlpha` | Optional alpha for state 0 and states 1+; `null` keeps the algorithm default; otherwise 0 is transparent and 1 is opaque | `null`, `null` |
-| `ca.rule` | `"counts"`, `"sum"`, `"majority"` | `"majority"` |
-| `ca.neighborhoodSize` | Positive odd side length; independent of seed size | `9` |
-| `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.67` |
+| `ca.rule` | `"counts"`, `"sum"`, `"majority"` | `"sum"` |
+| `ca.neighborhoodSize` | Positive odd side length; independent of seed size and grid factor | `3` |
+| `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.5` |
 | `ca.cycleUniform` | Boolean enabling uniform-neighborhood cycling for all CA rules | `true` |
-| `pn.mode` | `"legacy"` integer-direction movement or `"trajectory"` slopes/curves | `"legacy"` |
+| `pn.mode` | `"legacy"` integer-direction movement or `"trajectory"` slopes/curves | `"trajectory"` |
 | `pn.boundary` | `"wrap"` across plane edges or `"grow"` beyond them | `"grow"` |
-| `pn.maxCellsPerAxisPerLayer` | Positive int32 limit in cells per axis per layer; legacy continuation speed, trajectory speed ceiling | `1` |
-| `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement (legacy) or following the planned movement (trajectory) | `0.1` |
-| `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Nonnegative Perlin spatial/time scales; zero fixes the corresponding sampling coordinates | `0.01`, `0.01` |
-| `pn.trajectory.slope` | Nonnegative `[min, max]` slope, in cells per layer along the initial direction | `[0, 0.5]` |
-| `pn.trajectory.bend` | Signed `[min, max]` change in slope per layer | `[0, 0]` |
-| `pn.trajectory.amplitude` | Nonnegative `[min, max]` sine displacement, in cells | `[0, 0]` |
-| `pn.trajectory.wavelength` | Positive `[min, max]` sine cycle length, in layers | `[32, 32]` |
+| `pn.maxCellsPerAxisPerLayer` | Positive int32 limit in cells per axis per layer; legacy continuation speed, trajectory speed ceiling | `100` |
+| `pn.forwardProbability` | Probability in [0, 1] of continuing the previous displacement (legacy) or following the planned movement (trajectory) | `1` |
+| `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Factor-1 Perlin spatial/time scales; zero fixes the corresponding sampling coordinates | `0.01`, `0.5` |
+| `pn.trajectory.slope` | Nonnegative `[min, max]` slope, in cells per layer along the initial direction | `[0, 0]` |
+| `pn.trajectory.bend` | Factor-1 signed `[min, max]` change in slope per layer | `[-0.001, 0.001]` |
+| `pn.trajectory.amplitude` | Factor-1 nonnegative `[min, max]` sine displacement, in cells | `[16, 256]` |
+| `pn.trajectory.wavelength` | Factor-1 positive `[min, max]` sine cycle length, in layers | `[32, 1024]` |
 | `pn.trajectory.phase` | `[min, max]` sine phase, in radians | `[0, 2 * Math.PI]` |
-| `pn.trajectory.parameterNoise.spaceScale` | Nonnegative spatial scale for initial parameter fields; zero gives all cells identical parameters | `0.05` |
-| `pn.trajectory.parameterNoise.channels` | `"separate"` parameter fields or one `"shared"` sample for all ranges | `"separate"` |
+| `pn.trajectory.parameterNoise.spaceScale` | Factor-1 spatial scale for initial parameter fields; zero gives all cells identical parameters | `0.01` |
+| `pn.trajectory.parameterNoise.channels` | `"separate"` parameter fields or one `"shared"` sample for all ranges | `"shared"` |
 | `initial.mode` | `"random"` plane or reusable `"seed"` | `"seed"` |
-| `initial.patternSize` | Positive integer seed side length, fitting both plane dimensions | `16` |
-| `initial.resolutionFactor` | Positive integer same-state block side length in X and Y; must divide `patternSize` exactly in seed mode | `1` |
-| `initial.symmetry` | `"plain"` or `"D4"` | `"plain"` |
+| `initial.patternSize` | Factor-1 positive integer seed side length, fitting both plane dimensions after scaling | `32` |
+| `initial.resolutionFactor` | Factor-1 positive integer same-state block side length in X and Y; must divide `patternSize` exactly in seed mode | `1` |
+| `initial.symmetry` | `"plain"` or `"D4"` | `"D4"` |
 | `initial.placement` | `"tiled"`, `"center"`, `"corners"` | `"tiled"` |
 | `initial.loopPattern` | Corners only: repeat the seed across the surroundings instead of leaving them empty (state 0); center and tiled always loop | `true` |
 | `memory.enabled` | Enable row-history tracking/reporting | `true` |
-| `memory.capacityMultiplier` | Positive integer; state-based capacity = multiplier times states squared; history holds at least a quarter of the effective depth | `2` |
-| `memory.matchRunFraction` | Fraction in (0, 1] determining the repeated-match threshold | `0.5` |
+| `memory.capacityMultiplier` | Positive integer; state-based capacity = multiplier times states squared times grid factor; history holds at least a quarter of the effective depth | `1` |
+| `memory.matchRunFraction` | Fraction in (0, 1] determining the repeated-match threshold | `1` |
 | `view.orientation` | `"sideways"` or `"vertical"` | `"vertical"` |
 | `view.presets` | Depth multiplier, canvas scale, and rotation for each orientation | Sideways depth x1; vertical depth x2 |
 | `view.cameraPadding` | Margin around the tightly fitted block, at least 1; larger zooms out | `1.05` |
@@ -98,6 +104,27 @@ precision. Existing per-setting limits still apply, such as states 2 through 9,
 probabilities from 0 to 1, and background values from 0 to 255. Values within
 these numeric ranges can still exceed available browser memory or rendering
 capacity.
+
+### Resolution and repeatability
+
+The editable initialization and PN settings describe a factor-1 run.
+`resolveConfig` scales them for the selected `grid.factor`: seed and initial
+block sizes, trajectory amplitude, and wavelength multiply by the factor;
+movement noise scales, trajectory parameter-noise scale, and trajectory bend
+divide by it. Slope, phase, probabilities, and the per-layer movement limit
+stay unchanged. The CA neighborhood size and one-update-per-layer cadence also
+stay unchanged. Memory history and match durations scale with the factor.
+The existing grid and generation getters already scale dimensions; don't
+multiply the editable settings by the factor manually.
+
+Set `simulation.seed` to the same integer in both runs to reproduce the palette,
+noise field, and initial coarse pattern. With `null`, each run generates and
+logs a fresh seed; copy it into `simulation.seed` to replay the run.
+This keeps composition and trajectory proportions similar, not identical:
+cell quantization, collisions, per-layer random deviations, and CA evolution
+can diverge. Per-cell alpha is deliberately unchanged, so higher-resolution
+transparent volumes can appear denser. The larger canvas and greater number of
+cells and layers also require more browser and GPU resources.
 
 Rendering uses pixel density 1, including on Retina displays and in headless
 exports. Canvas dimensions remain the requested `grid` size times the selected
@@ -115,6 +142,7 @@ set `initial.mode = "seed"`, `initial.symmetry = "D4"`, and
 `initial.placement = "center"`.
 
 For lower-resolution initial patterns, set `initial.resolutionFactor = 2`.
+For example, with `grid.factor = 1`:
 With `initial.patternSize = 8`, this generates a 4x4 coarse seed and expands each
 state into a 2x2 block: positions 0/1 share a state, 2/3 share a state, and so on
 along both axes. The final seed remains 8x8 cells. D4 symmetry is applied to the
@@ -126,7 +154,7 @@ a factor larger than the plane produces one block. Only initialization is
 coarsened: subsequent CA/PN generations still operate at full cell resolution,
 so the blocks need not remain uniform. Factor 1 preserves existing behavior.
 
-The default is the active sketch's PN/plain-tiled/vertical configuration, not
+The default is the active sketch's PN/D4-tiled/vertical configuration, not
 the corner placement described by older versions of this README.
 
 ### CA rules
@@ -160,8 +188,8 @@ units, visual effects, presets, and diagnostic findings.
 
 PN does not turn noise directly into cell states. Empty cells never act. Every
 occupied cell moves to one destination in the next generation and keeps its
-state/color. The default `pn.mode: "legacy"` preserves the existing movement
-algorithm described below.
+state/color. `pn.mode: "legacy"` uses the heading-based movement algorithm
+described below.
 
 There are nine heading directions: eight signed x/y directions plus `[0, 0]`
 (a straight line through time). With `pn.forwardProbability`, continue the
@@ -360,12 +388,17 @@ depends on recognizing special keys in a rule map.
 Visual depth is `baseDepth` for sideways and twice that for vertical.
 `simulation.numGenerations` sets the total number of layers, including the
 initial layer. Its current getter uses 1.75 times the effective visual depth.
-Replace the getter with `numGenerations: 1000,` to retain 1,000 layers
+Replace the getter with `numGenerations: 1000,` to render 1,000 generations
 independently of orientation and depth.
 The camera stays fixed to the visual depth: shorter runs leave unused space,
-while longer runs keep adding and retaining layers at the same spacing, so some
-later layers may be clipped. More generations require more memory and rendering
-time; the resulting layer positions must also fit finite float32 values.
+while longer runs keep adding layers at the same spacing, so some later layers
+may be clipped. By default, `simulation.retainHistory` is `false`, so the
+simulation releases each CPU layer after it is used to compute the next one;
+rendered output remains on the canvas. Set `simulation.retainHistory` to `true`
+in `sketch_3d/config.js` to keep every layer for later inspection, at the cost
+of more memory. This setting is independent of the row-history algorithm
+controlled by `memory.enabled`. Generation count still affects rendering time,
+and layer positions must fit finite float32 values.
 Rotation values are multiples of PI. Each preset defines canvas scales;
 the orthographic camera fits the rotated block's on-screen outline tightly at
 any rotation (the vertical default matches the original `ortho(-420, 420, 840, -840)` framing).
@@ -383,8 +416,8 @@ alpha 1 is fully opaque.
 
 Memory stores the **x=0 row**, not the entire plane. It uses a bounded ring,
 hashes followed by exact row comparisons, and looks for consecutive matches at
-the same period. Its threshold is `max(1, floor(capacityMultiplier * states² *
-matchRunFraction))`, capped at a quarter of the effective depth for periods up
+the same period. Its threshold is `grid.factor * max(1, floor(capacityMultiplier *
+states² * matchRunFraction))`, capped at a quarter of the effective depth for periods up
 to that length. History holds at least a quarter of the depth. A repeated row
 is not proof of a repeated plane.
 
@@ -396,8 +429,8 @@ rule is available, memory reports this and retries on subsequent qualifying
 layers. PN and CA `majority` only report repetitions; disabling memory skips
 tracking and reporting.
 
-Changing configuration requires reload. Each reload creates a fresh random
-palette, seed, and random CA rules; runs are not reproducible by default.
+Changing configuration requires reload. With `simulation.seed: null`, each
+reload generates and logs a new seed, producing a fresh reproducible run.
 Large grids/generation counts/neighborhoods still require sufficient browser resources.
 
 ## Code layout

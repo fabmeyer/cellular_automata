@@ -5,6 +5,7 @@ class GridRenderer {
         const isCA = settings.simulation.algorithm === "CA";
         const state0Alpha = settings.coloring.state0Alpha ?? (isCA ? 0.5 : 0.05);
         const otherStatesAlpha = settings.coloring.otherStatesAlpha ?? (isCA ? 1 : 0.95);
+        this.coloring = { state0Alpha, otherStatesAlpha };
         this.colors = [`rgba(0, 0, 0, ${state0Alpha})`];
         for (let state = 1; state < settings.simulation.states; state++) {
             const rgb = Array.from({ length: 3 }, () => Math.floor(random() * 255));

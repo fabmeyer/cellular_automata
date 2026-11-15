@@ -9,6 +9,16 @@ Configure [config.js](../sketch_3d/config.js), select
 The implementation is in [perlin.js](../sketch_3d/perlin.js); the
 [README](../README.md) covers the rest of the application.
 
+Editable spatial and temporal settings use factor-1 units. At another
+`grid.factor`, the resolver divides movement and parameter-noise scales and
+trajectory bend by the factor, and multiplies trajectory amplitude and
+wavelength by it. Slope, phase, probability, and movement limit remain
+unchanged. The formulas and movement budget below use these effective values.
+Set `simulation.seed` to the same unsigned 32-bit integer for reproducible
+noise, initialization, and palette; `null` generates and logs a fresh seed.
+Corresponding runs are only approximately similar because discrete movement,
+collisions, and stochastic deviations can diverge.
+
 ## 1. The idea
 
 The visualization stacks successive 2D cell grids into a 3D volume. The x/y
@@ -94,7 +104,7 @@ amplitude.
 | --- | --- |
 | `grid.cols`, `grid.rows` | Positive int32 plane dimensions, in cells. |
 | `grid.baseDepth` | Positive int32 base camera-framing depth in layers. Effective visual depth also includes the selected view's depth multiplier. |
-| `grid.factor` | In the supplied CONFIG getters, scales cols, rows, and baseDepth together. It is not a Perlin parameter; the derived dimensions are validated. |
+| `grid.factor` | Scales grid dimensions and effective PN and initial-pattern settings as described above. Derived values are validated. |
 | `grid.cellSize` | Positive finite cube size in pixels. It changes presentation, not cell-space motion or noise sampling. |
 | `simulation.states` | Integer 2 through 9, including empty state 0. |
 | `simulation.numGenerations` | Positive int32 total layer count including layer 0. The current getter uses 1.75 times visual depth; replace it with a number for an independent count. |
@@ -313,8 +323,9 @@ The current implementation still samples movement noise and draws the shared
 phase at `P=1`, even though they cannot change the selected movement. Active
 settings and trajectory-mode noise samples are still validated.
 
-Runs are not reproducible by default: initialization, the noise field, palette,
-and random movement phases can differ between reloads.
+With `simulation.seed: null`, each reload generates and logs a fresh seed, so
+initialization, the noise field, palette, and random movement phases can differ.
+Set `simulation.seed` to the logged integer to replay them at the same factor.
 
 ## 7. The movement budget and console log
 

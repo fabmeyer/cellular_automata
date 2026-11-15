@@ -247,8 +247,9 @@ async function main() {
                     const samples = [];
                     const checksums = [];
                     for (let trial = 0; trial < 4; trial++) {
-                        const sim = new Simulation(configFor(96, 64, algorithm),
-                            randomGenerator(), noise);
+                        const config = configFor(96, 64, algorithm);
+                        config.simulation.retainHistory = !rolling;
+                        const sim = new Simulation(config, randomGenerator(), noise);
                         sim.initialize();
                         const start = performance.now();
                         let z;
@@ -259,14 +260,10 @@ async function main() {
                                     checksum = (Math.imul(checksum, 31) + sim.grid.get(x, y, z)) >>> 0;
                                 }
                             }
-                            if (rolling) sim.grid.layers[z - 1] = null;
                             for (const cell of sim.grid.outsideLayers?.[z]?.values() ?? []) {
                                 for (const value of [cell.x, cell.y, cell.state]) {
                                     checksum = (Math.imul(checksum, 31) + value) >>> 0;
                                 }
-                            }
-                            if (rolling && sim.grid.outsideLayers) {
-                                sim.grid.outsideLayers[z - 1] = null;
                             }
                         }
                         if (trial > 0) {

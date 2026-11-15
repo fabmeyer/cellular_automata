@@ -774,6 +774,51 @@ test('memory compares the oldest retained generation before overwriting it', () 
     assert.deepEqual(Array.from(memory.getLatestRow()), stripes[4]);
 });
 
+test('rolling simulations release consumed grid and PN outside layers without changing output', () => {
+    for (const algorithm of ['CA', 'PN']) {
+        const overrides = {
+            grid: { cols: 4, rows: 4, baseDepth: 6 },
+            simulation: { algorithm, states: 3, numGenerations: 6, retainHistory: true },
+            initial: { mode: 'random' },
+            pn: { boundary: 'grow', maxCellsPerAxisPerLayer: 1 },
+            memory: { enabled: true }
+        };
+        const noise = (x, y, z) => (x + y + z) % 1;
+        const { subject: full, classes, config } = createHarness(overrides, {
+            random: seededRandom(42), noise
+        });
+        const rollingConfig = { ...config, simulation: { ...config.simulation, retainHistory: false } };
+        const rolling = new classes.Simulation(rollingConfig, seededRandom(42), noise);
+        assert.equal(rolling.grid.retainHistory, false);
+        full.initialize();
+        rolling.initialize();
+
+        const initial = layerStates(full.grid, 0);
+        assert.deepEqual(layerStates(rolling.grid, 0), initial);
+        for (let z = 1; z < rolling.settings.simulation.numGenerations; z++) {
+            assert.equal(rolling.step(), z);
+            assert.equal(full.step(), z);
+            assert.deepEqual(layerStates(rolling.grid, z), layerStates(full.grid, z), `${algorithm} layer ${z}`);
+            assert.equal(rolling.grid.layers[z - 1], null);
+            assert.equal(rolling.grid.layers.filter(layer => layer !== null).length, 1);
+            assert.throws(() => rolling.grid.layer(z - 1), /already been released/);
+            if (algorithm === 'PN') {
+                assert.deepEqual(plain(Array.from(rolling.grid.outsideLayers[z].entries())),
+                    plain(Array.from(full.grid.outsideLayers[z].entries())), `PN outside layer ${z}`);
+                assert.equal(rolling.grid.outsideLayers[z - 1], null);
+            }
+        }
+        assert.equal(rolling.step(), null);
+        assert.deepEqual(layerStates(full.grid, 0), initial);
+        if (algorithm === 'PN') {
+            assert.ok(full.grid.outsideLayers.some(layer => layer?.size > 0));
+        }
+        rolling.initialize();
+        assert.equal(rolling.step(), 1);
+        assert.equal(rolling.grid.layers[0], null);
+    }
+});
+
 test('memory reports a qualifying repeated run once even when CA has no mutable rule map', () => {
     const { subject, logs } = createHarness({
         grid: { cols: 2, rows: 1, baseDepth: 16 },
@@ -868,6 +913,132 @@ test('configured generation count uses grid depth and view preset, and rejects i
     assert.throws(() => classes.resolveConfig(config), /finite float32 layer positions/);
 });
 
+test('grid factor scales effective settings without mutating the factor-1 inputs', () => {
+    const make = factor => createHarness({
+        grid: { factor, cols: 8 * factor, rows: 8 * factor, baseDepth: 8 * factor },
+        simulation: { algorithm: 'PN', states: 3, numGenerations: 8 * factor },
+        initial: { patternSize: 4, resolutionFactor: 2 },
+        pn: {
+            mode: 'trajectory', noiseSpaceScale: 0.08, noiseTimeScale: 0.12,
+            maxCellsPerAxisPerLayer: 10,
+            trajectory: {
+                slope: [0.2, 0.4], bend: [-0.01, 0.02], amplitude: [1, 2],
+                wavelength: [8, 16], phase: [0, 1],
+                parameterNoise: { spaceScale: 0.04, channels: 'shared' }
+            }
+        },
+        memory: { enabled: true, capacityMultiplier: 2, matchRunFraction: 0.5 }
+    });
+    const base = make(1);
+    const refined = make(4);
+    const a = base.subject.settings;
+    const b = refined.subject.settings;
+    assert.equal(b.initial.patternSize, a.initial.patternSize * 4);
+    assert.equal(b.initial.resolutionFactor, a.initial.resolutionFactor * 4);
+    assert.equal(b.pn.noiseSpaceScale, a.pn.noiseSpaceScale / 4);
+    assert.equal(b.pn.noiseTimeScale, a.pn.noiseTimeScale / 4);
+    assert.equal(b.pn.trajectory.parameterNoise.spaceScale, a.pn.trajectory.parameterNoise.spaceScale / 4);
+    for (const name of ['amplitude', 'wavelength']) {
+        assert.deepEqual(plain(b.pn.trajectory[name]), plain(a.pn.trajectory[name].map(value => value * 4)));
+    }
+    assert.deepEqual(plain(b.pn.trajectory.bend), plain(a.pn.trajectory.bend.map(value => value / 4)));
+    for (const name of ['slope', 'phase']) {
+        assert.deepEqual(plain(b.pn.trajectory[name]), plain(a.pn.trajectory[name]));
+    }
+    assert.equal(b.memoryCapacity, a.memoryCapacity * 4);
+    assert.equal(b.matchRunLength, a.matchRunLength * 4);
+    assert.equal(b.ca.neighborhoodSize, a.ca.neighborhoodSize);
+    assert.equal(b.pn.maxCellsPerAxisPerLayer, a.pn.maxCellsPerAxisPerLayer);
+    assert.deepEqual(plain(b.coloring), plain(a.coloring));
+    assert.equal(refined.config.initial.patternSize, 4);
+    assert.equal(refined.config.pn.noiseSpaceScale, 0.08);
+    assert.deepEqual(plain(refined.classes.resolveConfig(refined.config).pn), plain(b.pn));
+});
+
+test('seeded initial patterns and colors align across grid factors', () => {
+    for (const initial of [
+        { mode: 'random' },
+        ...['tiled', 'center', 'corners'].map(placement =>
+            ({ mode: 'seed', patternSize: 4, symmetry: 'D4', placement, loopPattern: false }))
+    ]) {
+        const run = factor => {
+            const { classes, config, context } = createHarness({
+                grid: { factor, cols: 8 * factor, rows: 8 * factor, baseDepth: 8 * factor },
+                simulation: { algorithm: 'CA', states: 3, seed: 42, numGenerations: 2 },
+                initial, memory: { enabled: false }
+            });
+            const subject = new classes.Simulation(config);
+            subject.initialize();
+            const colors = new classes.GridRenderer(subject.settings, drawingStub().drawing,
+                vm.runInContext('createSeededRandom(42)', context)).colors;
+            return { subject, colors };
+        };
+        const base = run(1);
+        const refined = run(4);
+        for (let x = 0; x < 8; x++) {
+            for (let y = 0; y < 8; y++) {
+                for (let dx = 0; dx < 4; dx++) {
+                    for (let dy = 0; dy < 4; dy++) {
+                        assert.equal(refined.subject.grid.get(x * 4 + dx, y * 4 + dy, 0),
+                            base.subject.grid.get(x, y, 0), JSON.stringify(initial));
+                    }
+                }
+            }
+        }
+        const baseAgain = run(1);
+        assert.deepEqual(layerStates(base.subject.grid, 0), layerStates(baseAgain.subject.grid, 0));
+        assert.deepEqual(plain(base.colors), plain(refined.colors));
+    }
+});
+
+test('CA neighborhood and per-layer update cadence do not scale with grid factor', () => {
+    for (const factor of [1, 4]) {
+        const { subject } = createHarness({
+            grid: { factor, cols: 2 * factor, rows: 2 * factor, baseDepth: 4 * factor },
+            simulation: { algorithm: 'CA', states: 3, numGenerations: 3 },
+            initial: { mode: 'random' }, ca: { rule: 'majority', neighborhoodSize: 1, cycleUniform: true },
+            memory: { enabled: false }
+        });
+        assert.equal(subject.settings.ca.neighborhoodSize, 1);
+        subject.initialize();
+        subject.step();
+        assert.equal(subject.grid.get(0, 0, 1), 1);
+        subject.step();
+        assert.equal(subject.grid.get(0, 0, 2), 2);
+    }
+});
+
+test('factor and seed reject invalid values and validate scaled results', () => {
+    for (const factor of [0, -1, 1.5, NaN, Infinity, '4', null, undefined, 2147483648]) {
+        assert.throws(() => createHarness({ grid: { factor } }), /grid\.factor/);
+    }
+    for (const seed of [-1, 1.5, NaN, Infinity, '1', undefined, 4294967296]) {
+        assert.throws(() => createHarness({ simulation: { seed } }), /simulation\.seed/);
+    }
+    for (const seed of [null, 0, 4294967295]) {
+        assert.doesNotThrow(() => createHarness({ simulation: { seed } }));
+    }
+    assert.throws(() => createHarness({
+        grid: { factor: 4 }, initial: { mode: 'random', resolutionFactor: 0.5 }
+    }), /initial\.resolutionFactor/);
+    assert.throws(() => createHarness({
+        grid: { factor: 4 }, initial: { mode: 'random', resolutionFactor: 1073741824 }
+    }), /initial\.resolutionFactor/);
+    assert.throws(() => createHarness({
+        grid: { factor: 4 }, simulation: { algorithm: 'PN' },
+        pn: { mode: 'trajectory', trajectory: {
+            slope: [0, 0], bend: [0, 0], amplitude: [0, 1e38], wavelength: [1, 1],
+            phase: [0, 0], parameterNoise: { spaceScale: 0, channels: 'shared' }
+        } }
+    }), /pn\.trajectory\.amplitude/);
+    const { classes, config } = createHarness();
+    delete config.grid.factor;
+    delete config.simulation.seed;
+    const settings = classes.resolveConfig(config);
+    assert.equal(settings.initial.resolutionFactor, config.initial.resolutionFactor);
+    assert.equal(settings.simulation.seed, null);
+});
+
 test('changing generation count preserves shared layers and depth-based memory', () => {
     for (const [algorithm, mode, boundary] of [
         ['CA', 'legacy', 'wrap'], ['PN', 'legacy', 'wrap'],
@@ -939,6 +1110,7 @@ test('frame scheduling stops at the configured generation count', () => {
         const pending = [];
         Object.assign(context, drawing, {
             testConfig: config,
+            noiseSeed() {},
             setTimeout(callback, delay) { pending.push({ callback, delay }); }
         });
         vm.runInContext('Object.assign(CONFIG, testConfig); setup();', context);
@@ -1185,6 +1357,12 @@ test('invalid active options fail before allocation; inactive settings are ignor
         pn: { forwardProbability: -1, noiseSpaceScale: 0, noiseTimeScale: 0, boundary: 'bad' }
     }));
     assert.doesNotThrow(() => createHarness({ initial: { placement: 'center', loopPattern: 'bad' } }));
+});
+
+test('simulation history retention requires a boolean', () => {
+    for (const retainHistory of [undefined, null, 0, 1, 'false']) {
+        assert.throws(() => createHarness({ simulation: { retainHistory } }), /simulation\.retainHistory/);
+    }
 });
 
 test('a one-layer simulation completes without generating an out-of-bounds layer', () => {

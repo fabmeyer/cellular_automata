@@ -103,7 +103,7 @@ Their speedups cannot be multiplied together: they optimize overlapping work.
 | **1. Instanced cubes in the existing p5/WebGL renderer** | **Measured:** 192x192: **416.6 -> 7.8 ms/layer, 53.4x**. 48x48: **28.3 -> 1.4 ms, 20.2x**. One shared cube and state texture replace thousands of per-cell submissions. | Reuse cube geometry; derive regular-grid coordinates from instance ID. A packed dense state needs 1 byte/cell on CPU, or typically 4 bytes/cell in a simple GPU storage layout. Browser heap cap remains; GPU allocations are separate. |
 | **2. Actually load npm p5 2.4.0, staying on WebGL** | **Measured controlled comparison:** **26.0 -> 17.4 ms, 1.49x**, on 48x48 with unchanged per-cell renderer. | No increase in JS heap or texture caps. Low implementation effort, but repeat regression/image tests before upgrading. |
 | **3. Replace Cell objects/nested histories with flat Uint8Array state** | **Measured allocation only:** **32.1 -> 3.1 ms, 10.35x** for 1,179,648 cells. Reported allocation delta: **37,772,608 -> 1,185,300 bytes, 31.9x smaller**. | States are 0..8: one byte is sufficient. Coordinates can be derived. Current 49,545,216-cell dense state becomes exactly **47.25 MiB**, excluding other structures. Chunked backing stores can cross 4 GiB in aggregate. |
-| **4. Keep two working layers; release/archive old data** | **Measured reference-release prototype:** PN **222.9 -> 212.5 ms, 1.049x**; CA **107.6 -> 102.8 ms, 1.047x**, over 63 steps. Matching checksums in all trials. Small short-run time improvement; principal benefit is memory. | **Analytic full redesign:** dense uint8 working state **47.25 MiB -> 72 KiB, 672x smaller**, for 1344 -> 2 planes. PN outside maps/trajectory metadata and stripe memory are additional. |
+| **4. Keep two working layers; release/archive old data** | **Measured reference-release prototype:** PN **222.9 -> 212.5 ms, 1.049x**; CA **107.6 -> 102.8 ms, 1.047x**, over 63 steps. Matching checksums in all trials. The completed rolling implementation adds no meaningful simulation speedup; its benefit is memory. | **Analytic dense-state estimate:** **47.25 MiB -> at most 72 KiB, 672x smaller**, for 1344 -> 2 planes during a transition. PN outside maps/trajectory metadata and stripe memory are additional. |
 | **5. p5.js WebGPU, retaining the per-cell loop** | **Measured:** p5 2.4 WebGPU **22.9 ms**, versus old 2.1.2 WebGL **26.0 ms: 1.14x**. But modern 2.4 WebGL is **17.4 ms**, so WebGPU is **31.6% slower than simply upgrading WebGL** in this case. | Stock tested p5 WebGPU device uses **256 MiB max buffer, 128 MiB max storage binding, 8192 texture side** despite higher adapter capabilities. It does not remove the JS heap cap. |
 | **6. Raw WebGPU in a Vite application** | **Unmeasured:** no defensible whole-repository speedup yet. **Analytic:** instancing reduces 36,864 interior cube submissions/layer to roughly one draw/layer. Existing-WebGL instancing already realizes the main draw-call opportunity. Vite alone has no demonstrated runtime gain. | Can explicitly request higher adapter limits, use compact buffers, GPU compute, and tiled readback. Local adapter advertises **4,294,967,292 bytes per buffer/storage binding** and **16384 texture side**; total GPU budget is separate and not guaranteed. |
 | **7. Tiled rendering + streaming export** | Not a speed optimization by itself. A 50,000-square image with 4096-square tiles needs **169 tile views**; replaying the whole scene for each can approach 169x rendering work without tile culling. | **Analytic:** 50,000-square RGBA8 needs **9.31 GiB** just for color, versus **64 MiB per 4096 tile**. Removes the need for one giant canvas/texture and one full-image RAM allocation. |
@@ -145,12 +145,27 @@ has been drawn into a persistent accumulation target.
   **17.0 s -> 13.4 s**, final JS heap **1665 MiB -> 93 MiB** (one random run
   each).
 
-**Compact history:** the reference-release prototype still leaves preallocated
-history slots in place; achieving the 672x dense-state saving requires a real
-ring-buffer redesign, not merely assigning null. For tiling, camera changes,
-or WebGPU device/context recovery, archive compact history/instance data or
-save deterministic checkpoints. The normal application uses Math.random,
-so replay requires explicitly recording/seeding all randomness and noise.
+**Status:** rolling CPU state is implemented in `StateGrid` and `Simulation`.
+- By default, layers are allocated on demand. After computing generation `z`,
+  the consumed `z-1` state and PN outside-cell map are released; only the
+  current dense state remains between steps, with at most two dense planes live
+  while computing.
+- The rendered canvas retains the image, but past CPU states are unavailable by
+  default. Set `simulation.retainHistory` to `true` in `sketch_3d/config.js` to
+  keep them; tests use that mode when comparing complete histories.
+- CA and growing-PN tests verify per-layer output matches retained-history runs.
+- The 672x dense-state reduction is an analytic byte-count estimate, not a new
+  benchmark measurement. Rendering, GPU memory, PN metadata, and the layer-slot
+  index remain separate costs.
+- The current 384x384, 2688-generation headless config reached 100% at
+  **177.1 s** and successfully exported a 6144x12288 PNG. Sampled Chromium heap
+  usage ranged from **27.8 to 117.9 MiB used** and **97.4 to 236.4 MiB
+  allocated**; the final sample was **30.1 / 98.7 MiB**. This is one random
+  run, not a peak or performance guarantee.
+- For tiling, camera changes, or WebGPU device/context recovery, archive compact
+  history/instance data or save deterministic checkpoints. The normal
+  application uses Math.random, so replay requires explicitly recording/seeding
+  all randomness and noise.
 
 **Retained geometry is not the first choice for this one-shot renderer.**
 At 48x48, a cached merged model draws in **9.0 ms instead of 28.3 ms (3.14x)**,

@@ -1,16 +1,26 @@
+function createSeededRandom(seed) {
+    let state = seed;
+    return () => {
+        state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+        return state / 4294967296;
+    };
+}
+
 class Simulation {
-    constructor(config, random = Math.random, noiseField = globalThis.noise) {
+    constructor(config, random, noiseField = globalThis.noise) {
         this.settings = resolveConfig(config);
-        this.random = random;
+        this.random = random ?? (this.settings.simulation.seed === null
+            ? Math.random : createSeededRandom(this.settings.simulation.seed));
         this.grid = createGrid(this.settings);
         this.algorithm = this.settings.simulation.algorithm === "CA"
-            ? new CellularAutomaton(this.settings, random)
-            : new PerlinMovement(this.settings, random, noiseField);
+            ? new CellularAutomaton(this.settings, this.random)
+            : new PerlinMovement(this.settings, this.random, noiseField);
         this.memory = null;
         this.nextZ = 0;
     }
 
     initialize() {
+        this.grid.reset();
         initializeGrid(this.grid, this.settings, this.random);
         this.algorithm.initialize(this.grid);
         this.memory = this.settings.memory.enabled ? new RowMemory(this.settings) : null;
@@ -49,6 +59,12 @@ class Simulation {
                 } else if (firstNotice) {
                     console.log("Memory could not change a rule: no non-uniform CA rule available to change in this layer.");
                 }
+            }
+        }
+        if (!this.settings.simulation.retainHistory) {
+            this.grid.releaseLayer(z - 1);
+            if (this.grid.outsideLayers) {
+                this.grid.outsideLayers[z - 1] = null;
             }
         }
         this.nextZ++;
@@ -95,10 +111,95 @@ function reportSimulationProgress() {
     });
 }
 
+function logSimulationSettings(settings, coloring, seedSource) {
+    const { grid, simulation, initial, memory, view } = settings;
+    const initialSettings = {
+        mode: initial.mode,
+        resolutionFactor: initial.resolutionFactor
+    };
+    if (initial.mode === "seed") {
+        Object.assign(initialSettings, {
+            patternSize: initial.patternSize,
+            symmetry: initial.symmetry,
+            placement: initial.placement
+        });
+        if (initial.placement === "corners") {
+            initialSettings.loopPattern = initial.loopPattern;
+        }
+    }
+    let algorithmSettings;
+    if (simulation.algorithm === "CA") {
+        const { rule, neighborhoodSize, cycleUniform, emptyStateProbability } = settings.ca;
+        algorithmSettings = { rule, neighborhoodSize, cycleUniform };
+        if (rule !== "majority") {
+            algorithmSettings.emptyStateProbability = emptyStateProbability;
+        }
+    } else {
+        const { mode, boundary, maxCellsPerAxisPerLayer, forwardProbability,
+            noiseSpaceScale, noiseTimeScale, trajectory } = settings.pn;
+        algorithmSettings = {
+            mode, boundary, maxCellsPerAxisPerLayer, forwardProbability, noiseSpaceScale, noiseTimeScale
+        };
+        if (mode === "trajectory") {
+            const { slope, bend, amplitude, wavelength, phase, parameterNoise } = trajectory;
+            algorithmSettings.trajectory = {
+                slope, bend, amplitude, wavelength, phase,
+                parameterNoise: { spaceScale: parameterNoise.spaceScale, channels: parameterNoise.channels }
+            };
+        }
+    }
+    const memorySettings = { enabled: memory.enabled };
+    if (memory.enabled) {
+        const quarterDepth = Math.floor(settings.depth / 4);
+        Object.assign(memorySettings, {
+            capacityMultiplier: memory.capacityMultiplier,
+            matchRunFraction: memory.matchRunFraction,
+            capacity: settings.memoryCapacity,
+            matchRunLength: settings.matchRunLength,
+            quarterDepth,
+            shortPeriodMatchRunLength: quarterDepth > 0
+                ? Math.min(settings.matchRunLength, quarterDepth) : settings.matchRunLength
+        });
+    }
+    const record = {
+        timestamp: new Date().toISOString(),
+        grid: { factor: Object.hasOwn(grid, "factor") ? grid.factor : 1,
+            cols: grid.cols, rows: grid.rows, baseDepth: grid.baseDepth, cellSize: grid.cellSize },
+        simulation: {
+            algorithm: simulation.algorithm, states: simulation.states, numGenerations: simulation.numGenerations,
+            retainHistory: simulation.retainHistory, seed: simulation.seed, seedSource,
+            timeInterval: simulation.timeInterval
+        },
+        algorithm: algorithmSettings,
+        initial: initialSettings,
+        memory: memorySettings,
+        coloring,
+        view: {
+            orientation: view.orientation, depthMultiplier: settings.preset.depthMultiplier,
+            canvasScale: settings.preset.canvasScale, rotation: settings.preset.rotation,
+            cameraPadding: view.cameraPadding, zoom: view.zoom, antialias: view.antialias,
+            background: view.background, depth: settings.depth,
+            canvasWidth: settings.canvasWidth, canvasHeight: settings.canvasHeight
+        }
+    };
+    console.log("Simulation settings:", JSON.stringify(record));
+}
+
 function setup() {
     try {
-        simulation = new Simulation(CONFIG);
-        renderer = new GridRenderer(simulation.settings);
+        const simulationConfig = { ...CONFIG.simulation };
+        const configuredSeed = Object.hasOwn(simulationConfig, "seed") ? simulationConfig.seed : null;
+        const seedSource = configuredSeed === null ? "generated" : "configured";
+        simulationConfig.seed = configuredSeed === null
+            ? Math.floor(Math.random() * 4294967296) : configuredSeed;
+        simulation = new Simulation({ ...CONFIG, simulation: simulationConfig });
+        const seed = simulation.settings.simulation.seed;
+        if (typeof globalThis.noiseSeed !== "function") {
+            throw new Error("A seeded simulation requires p5 noiseSeed");
+        }
+        globalThis.noiseSeed(seed);
+        renderer = new GridRenderer(simulation.settings, globalThis, createSeededRandom(seed));
+        logSimulationSettings(simulation.settings, renderer.coloring, seedSource);
         renderer.setup(error => {
             recordSimulationError(error);
             console.error(error);

@@ -18,7 +18,8 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
     const defaults = structuredClone(vm.runInContext('CONFIG', context));
     const config = {
         ...defaults,
-        grid: { ...defaults.grid, cols: 8, rows: 8, baseDepth: 8 },
+        grid: { ...defaults.grid, factor: 1, cols: 8, rows: 8, baseDepth: 8 },
+        simulation: { ...defaults.simulation, retainHistory: true },
         pn: {
             ...defaults.pn, mode: 'legacy', boundary: 'wrap', maxCellsPerAxisPerLayer: 1,
             trajectory: {
@@ -26,7 +27,7 @@ function createHarness(overrides = {}, { random = () => 0, noise = () => 0 } = {
                 amplitude: [0, 0], wavelength: [32, 32], phase: [0, 2 * Math.PI]
             }
         },
-        initial: { ...defaults.initial, patternSize: 2 },
+        initial: { ...defaults.initial, patternSize: 2, resolutionFactor: 1 },
         view: { ...defaults.view, orientation: 'sideways' }
     };
     for (const [section, values] of Object.entries(overrides)) {

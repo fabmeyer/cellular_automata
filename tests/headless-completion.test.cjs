@@ -4,27 +4,102 @@ const vm = require('node:vm');
 const { createHarness } = require('./helpers.cjs');
 
 function prepareSmallSimulation(numGenerations) {
-    const { context } = createHarness();
+    const { context, logs } = createHarness();
     const timers = [];
+    const seeds = [];
     context.noise = () => 0;
+    context.noiseSeed = seed => seeds.push(seed);
     context.setTimeout = callback => timers.push(callback);
     vm.runInContext(`
         Object.assign(CONFIG, {
             grid: { cols: 2, rows: 2, baseDepth: 2, cellSize: 1 },
-            simulation: { algorithm: "PN", states: 2, numGenerations: ${numGenerations}, timeInterval: 0 },
+            simulation: { ...CONFIG.simulation, algorithm: "PN", states: 2, numGenerations: ${numGenerations}, timeInterval: 0 },
             pn: { ...CONFIG.pn, mode: "legacy", boundary: "wrap", maxCellsPerAxisPerLayer: 1 },
-            initial: { ...CONFIG.initial, mode: "random" },
+            initial: { ...CONFIG.initial, mode: "random", resolutionFactor: 1 },
             memory: { ...CONFIG.memory, enabled: false },
             view: { ...CONFIG.view, orientation: "sideways" }
         });
-        GridRenderer = class {
+        const OriginalGridRenderer = GridRenderer;
+        GridRenderer = class extends OriginalGridRenderer {
             setup(onContextLost) { this.onContextLost = onContextLost; }
             assertContext() {}
             drawLayer() {}
         };
     `, context);
-    return { context, timers };
+    return { context, timers, logs, seeds };
 }
+
+test('startup logs configured and generated seeds without mutating configuration', () => {
+    for (const [seed, source, expected] of [[0, 'configured', 0], [null, 'generated', 1073741824]]) {
+        const { context, logs, seeds } = prepareSmallSimulation(1);
+        vm.runInContext(`CONFIG.simulation.seed = ${seed}; Math.random = () => 0.25`, context);
+        const before = Date.now();
+        vm.runInContext('setup()', context);
+        const after = Date.now();
+        const records = logs.filter(([label]) => label === 'Simulation settings:');
+        assert.equal(records.length, 1);
+        const record = JSON.parse(records[0][1]);
+        assert.equal(record.simulation.seed, expected);
+        assert.equal(record.simulation.seedSource, source);
+        assert.deepEqual(seeds, [expected]);
+        assert.equal(vm.runInContext('CONFIG.simulation.seed', context), seed);
+        assert.deepEqual(record.coloring, { state0Alpha: 0.05, otherStatesAlpha: 0.95 });
+        assert.equal(record.grid.factor, 1);
+        assert.equal(record.view.canvasWidth, 6);
+        assert.equal(record.view.canvasHeight, 6);
+        assert.deepEqual(record.memory, { enabled: false });
+        assert.equal(record.algorithm.mode, 'legacy');
+        assert.equal(Object.hasOwn(record.algorithm, 'trajectory'), false);
+        assert.equal(Object.hasOwn(record, 'palette'), false);
+        const timestamp = new Date(record.timestamp);
+        assert.equal(timestamp.toISOString(), record.timestamp);
+        assert.ok(timestamp.getTime() >= before && timestamp.getTime() <= after);
+    }
+});
+
+test('startup logs effective factor-scaled PN settings and active memory thresholds', () => {
+    const { context, logs } = prepareSmallSimulation(4);
+    vm.runInContext(`
+        CONFIG.grid = { factor: 4, cols: 8, rows: 8, baseDepth: 8, cellSize: 1 };
+        CONFIG.simulation.seed = 7;
+        CONFIG.coloring = { state0Alpha: 0.2, otherStatesAlpha: 0.3 };
+        CONFIG.pn = { ...CONFIG.pn, mode: 'trajectory', noiseSpaceScale: 0.2, noiseTimeScale: 0.4,
+            maxCellsPerAxisPerLayer: 10,
+            trajectory: { slope: [0, 0], bend: [0, 0], amplitude: [1, 2], wavelength: [8, 16],
+                phase: [0, 1], parameterNoise: { spaceScale: 0.12, channels: 'shared' } } };
+        CONFIG.memory = { enabled: true, capacityMultiplier: 1, matchRunFraction: 0.5 };
+    `, context);
+    vm.runInContext('setup()', context);
+    const record = JSON.parse(logs.find(([label]) => label === 'Simulation settings:')[1]);
+    assert.equal(record.grid.factor, 4);
+    assert.equal(record.initial.resolutionFactor, 4);
+    assert.equal(record.simulation.numGenerations, 4);
+    assert.equal(record.algorithm.noiseSpaceScale, 0.05);
+    assert.equal(record.algorithm.noiseTimeScale, 0.1);
+    assert.equal(record.algorithm.trajectory.parameterNoise.spaceScale, 0.03);
+    assert.deepEqual(record.algorithm.trajectory.amplitude, [4, 8]);
+    assert.deepEqual(record.algorithm.trajectory.wavelength, [32, 64]);
+    assert.deepEqual(record.coloring, { state0Alpha: 0.2, otherStatesAlpha: 0.3 });
+    assert.deepEqual(record.memory, {
+        enabled: true, capacityMultiplier: 1, matchRunFraction: 0.5,
+        capacity: 16, matchRunLength: 8, quarterDepth: 2, shortPeriodMatchRunLength: 2
+    });
+});
+
+test('startup logs active CA settings and omits invalid inactive PN settings', () => {
+    const { context, logs } = prepareSmallSimulation(1);
+    vm.runInContext(`
+        CONFIG.simulation.algorithm = 'CA';
+        CONFIG.simulation.seed = 5;
+        CONFIG.ca = { rule: 'majority', neighborhoodSize: 3, cycleUniform: true, emptyStateProbability: -1 };
+        CONFIG.pn.noiseSpaceScale = -1;
+    `, context);
+    vm.runInContext('setup()', context);
+    const record = JSON.parse(logs.find(([label]) => label === 'Simulation settings:')[1]);
+    assert.equal(record.simulation.algorithm, 'CA');
+    assert.deepEqual(record.algorithm, { rule: 'majority', neighborhoodSize: 3, cycleUniform: true });
+    assert.deepEqual(record.coloring, { state0Alpha: 0.5, otherStatesAlpha: 1 });
+});
 
 test('headless completion is signaled only after the configured final generation', () => {
     const { context, timers } = prepareSmallSimulation(3);
@@ -37,6 +112,19 @@ test('headless completion is signaled only after the configured final generation
     timers.shift()();
     assert.equal(context.simulationDone, true);
     assert.equal(context.simulationError, null);
+    assert.equal(vm.runInContext('simulation.grid.layers[0]', context), null);
+});
+
+test('headless setup honors configured layer retention', () => {
+    for (const retainHistory of [false, true]) {
+        const { context, timers } = prepareSmallSimulation(3);
+        vm.runInContext(`CONFIG.simulation.retainHistory = ${retainHistory}`, context);
+        vm.runInContext('setup()', context);
+        while (timers.length > 0) timers.shift()();
+
+        assert.equal(context.simulationDone, true);
+        assert.equal(vm.runInContext('simulation.grid.layers[0] !== null', context), retainHistory);
+    }
 });
 
 test('context loss stops pending frames and clears completion after the final layer', () => {
@@ -102,10 +190,11 @@ test('headless progress reports rendered layers at each 10% milestone with brows
 });
 
 test('headless setup records validation failures before rethrowing them', () => {
-    const { context } = prepareSmallSimulation(1);
+    const { context, logs } = prepareSmallSimulation(1);
     vm.runInContext('CONFIG.simulation.states = 1', context);
 
     assert.throws(() => vm.runInContext('setup()', context), /between 2 and 9/);
     assert.match(context.simulationError, /between 2 and 9/);
     assert.equal(context.simulationDone, false);
+    assert.equal(logs.some(([label]) => label === 'Simulation settings:'), false);
 });

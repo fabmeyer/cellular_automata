@@ -61,6 +61,12 @@ per-command responsiveness deadline remains enabled.
 
 ## Progress and diagnostics
 
+At startup the sketch logs `Simulation settings:` followed by complete JSON
+containing a UTC timestamp, the effective seed, seed source, active settings, and derived
+dimensions. With `simulation.seed: null`, a fresh seed is generated and logged;
+set `simulation.seed` to that number to replay the run. The headless runner
+forwards this record to the terminal; no metadata file is saved.
+
 The CLI reports progress after the first rendered layer, whenever another 10%
 threshold is crossed, and at 100%. Each line includes completed/total layers,
 elapsed seconds, and Chromium's JavaScript heap usage:
@@ -122,24 +128,25 @@ pointer-compression heap constraint is discussed in the
 JavaScript heap limit is not the same as the Mac's total RAM, and increasing a
 V8 option cannot bypass Chromium's per-isolate limit.
 
-The active configuration at the time this workflow was set up uses a
-192-by-192 grid and 1,344 generations. That means about 49.5 million allocated
-grid slots and layer-cell draw operations, plus a 3,072-by-6,144 canvas. The
-full configuration was verified end to end after fixing the completion wait:
-one run completed all layers and exported the PNG in approximately 497 seconds,
-well beyond the former 180-second protocol cutoff. Its completion sample
-reported 1,675 MiB of used JavaScript heap against a 4,192 MiB reported limit.
-These are measurements from one random run, not resource guarantees or peak
-memory measurements. Since then, instanced rendering and one-byte-per-cell
-layer storage brought the same configuration to about 13 seconds and under
-140 MiB of JavaScript heap. Larger or different settings may still exceed Chromium
-or WebGL resource limits.
+The current configuration uses a 384-by-384 grid, 2,688 generations, and a
+6,144-by-12,288 canvas. A full run after enabling rolling CPU state reached
+100% at 177.1 seconds and then successfully exported the PNG. Sampled Chromium
+heap usage ranged from 27.8 to 117.9 MiB used and 97.4 to 236.4 MiB allocated;
+the final sample was 30.1 / 98.7 MiB against a reported 4,192 MiB limit. These
+measurements are from one random run, and progress samples are not a guaranteed
+peak. With `simulation.retainHistory` set to its default of `false`, dense grid
+state is allocated on demand and the consumed generation is released, so at most
+two dense planes are live during a transition. Set `simulation.retainHistory` to
+`true` in `sketch_3d/config.js` to retain every generation at the cost of more
+memory. PN trajectory metadata, outside cells, the rendered canvas, and GPU
+resources still consume memory. Larger or different settings may exceed
+Chromium or WebGL resource limits.
 
 If a full run exceeds the renderer's capacity, larger Chromium heap flags are
-not a reliable remedy. The next options are to reduce or compact the retained
-simulation data, or move computation into a Node.js process and adapt the final
-rendering step. A browser-free renderer would require replacing or adapting the
-current WebGL rendering path.
+not a reliable remedy. The next options are to reduce grid/generation counts,
+compact remaining PN metadata, or move computation into a Node.js process and
+adapt the final rendering step. A browser-free renderer would require replacing
+or adapting the current WebGL rendering path.
 
 ## Validation notes
 
