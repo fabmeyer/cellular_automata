@@ -16,6 +16,24 @@ const algorithms = [
         [false, true].map(cycle => ({ algorithm: 'CA', rule, cycle })))
 ];
 
+test('PN drift and steering validate inputs and default missing options compatibly', () => {
+    for (const noiseDrift of [null, [], [1], [1, 2, 3], new Array(2), [NaN, 0], [0, Infinity], ['1', 0]]) {
+        assert.throws(() => createHarness({ pn: { noiseDrift } }), /pn.noiseDrift/);
+    }
+    for (const noiseSteering of [null, 0, 'true']) {
+        assert.throws(() => createHarness({ pn: { noiseSteering } }), /pn.noiseSteering/);
+    }
+    const { config, classes } = createHarness();
+    delete config.pn.noiseDrift;
+    delete config.pn.noiseSteering;
+    const resolved = classes.resolveConfig(config);
+    assert.deepEqual(plain(resolved.pn.noiseDrift), [0, 0]);
+    assert.equal(resolved.pn.noiseSteering, false);
+    const scaled = createHarness({ grid: { factor: 4 },
+        pn: { noiseDrift: [0.1, -0.2], noiseSteering: true } }).subject.settings;
+    assert.deepEqual(plain(scaled.pn.noiseDrift), [0.025, -0.05]);
+});
+
 test('CA and PN render the requested palette for empty and occupied states', () => {
     for (const [algorithm, expected] of [
         ['CA', ['rgba(0, 0, 0, 0.5)', 'rgb(0, 127, 254)', 'rgb(25, 51, 76)']],

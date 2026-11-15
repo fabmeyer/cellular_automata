@@ -10,8 +10,8 @@ The implementation is in [perlin.js](../sketch_3d/perlin.js); the
 [README](../README.md) covers the rest of the application.
 
 Editable spatial and temporal settings use factor-1 units. At another
-`grid.factor`, the resolver divides movement and parameter-noise scales and
-trajectory bend by the factor, and multiplies trajectory amplitude and
+`grid.factor`, the resolver divides drift components, movement and parameter-noise
+scales, and trajectory bend by the factor, and multiplies trajectory amplitude and
 wavelength by it. Slope, phase, probability, and movement limit remain
 unchanged. The formulas and movement budget below use these effective values.
 Set `simulation.seed` to the same unsigned 32-bit integer for reproducible
@@ -45,6 +45,11 @@ There are two modes:
 Trajectories are configurable curve families, not arbitrary user-provided
 functions or sequences.
 
+Both modes also support an opt-in sliding steering field through
+`pn.noiseDrift` and `pn.noiseSteering`. The retained-heading and fixed-parameter
+behavior described below assumes steering is disabled unless stated otherwise;
+section 3 explains how enabling it changes both modes.
+
 ## 2. Parameters, allowed values, units, and visual effects
 
 ### Numeric rules
@@ -68,7 +73,9 @@ independent.
 | `pn.maxCellsPerAxisPerLayer` | Integer 1 through 2147483647. | Maximum cells per x or y axis per layer. | Legacy continuation speed; trajectory speed ceiling. Larger jumps can leave gaps. |
 | `pn.forwardProbability` | 0 through 1, inclusive. | Probability of selecting the preferred movement. | 1 follows a heading/trajectory exactly; smaller values allow more deviations. |
 | `pn.noiseSpaceScale` | 0 through the finite magnitude limit. | Noise-coordinate units per grid cell in x and y. | Smaller generally creates broader patches of similar initial directions and movement samples. |
-| `pn.noiseTimeScale` | 0 through the finite magnitude limit. | Noise-coordinate units per layer. | Smaller makes deviation noise evolve more gradually across layers. No path effect at probability 1. |
+| `pn.noiseTimeScale` | 0 through the finite magnitude limit. | Noise-coordinate units per layer. | Smaller makes noise evolve more gradually. No path effect at probability 1 unless steering is enabled. |
+| `pn.noiseDrift` | Two signed finite float32 values; default `[0, 0]`. | x/y noise-coordinate translation per layer. | Slides the field; equal positive components move it diagonally toward positive x/y. |
+| `pn.noiseSteering` | Boolean; default `false`. | Follow a newly sampled preferred heading each layer in either mode, and resample trajectory parameters. | Makes sliding/evolving fields affect paths even at probability 1. |
 
 The movement limit is global, not a sampled per-cell range. It limits each axis
 separately, not Euclidean distance: a diagonal move can travel the limit in both
@@ -120,9 +127,10 @@ validation; changing visual depth alone does not affect an explicitly set count.
 The movement field is sampled as:
 
 ```text
-noise(x * noiseSpaceScale,
-      y * noiseSpaceScale,
-      (z - 1) * noiseTimeScale)
+t = z - 1
+noise(x * noiseSpaceScale - t * noiseDrift[0],
+      y * noiseSpaceScale - t * noiseDrift[1],
+      t * noiseTimeScale)
 ```
 
 At initialization the time coordinate is 0.
@@ -145,7 +153,7 @@ Smaller increments generally produce smoother variation between neighboring
 samples. Larger increments sample farther apart, but do not guarantee
 independence or a particular amount of variation.
 
-For trajectory parameters, only initial spatial coordinates are sampled:
+With steering disabled, trajectory parameters sample only initial spatial coordinates:
 
 ```text
 noise(initialX * parameterNoise.spaceScale,
@@ -154,6 +162,53 @@ noise(initialX * parameterNoise.spaceScale,
 ```
 
 The channel coordinate is not elapsed simulation time.
+
+### Sliding fields and dynamic steering
+
+Drift translates the noise field; `noiseTimeScale` evolves its shape. They are
+independent. For a fixed field sliding diagonally in positive grid x/y, use:
+
+```js
+noiseDrift: [0.01, 0.01],
+noiseTimeScale: 0,
+noiseSteering: true,
+forwardProbability: 1
+```
+
+These are shared settings under `pn`, not a third mode. Leave your other PN
+settings in place. Drift is measured in noise-coordinate units, not cells:
+with nonzero spatial scale, field translation in cells per layer is the drift
+component divided by that scale. The displayed direction also depends on the
+camera rotation. The bundled p5 noise reflects negative input coordinates;
+its reflected field is translated too, rather than producing seamless wrapping.
+
+With steering enabled:
+
+- Each occupied cell samples its preferred heading at its current position and
+  source layer `t`. Probability 1 follows the field exactly; smaller values still
+  permit the existing eight alternate adjacent movements.
+- Legacy scales that heading by the configured movement limit.
+- Trajectory also resamples slope, bend, amplitude, wavelength, and phase using
+  the current cell coordinates. Parameter samples use
+  `noise(x * parameterNoise.spaceScale - t * noiseDrift[0],
+  y * parameterNoise.spaceScale - t * noiseDrift[1],
+  channel + t * noiseTimeScale)`. Shared channels use 1; separate channels use
+  1 through 5.
+- For each step, trajectory computes `F(z; parameters) - F(z-1; parameters)`
+  using the same newly sampled parameters on both sides. It projects that scalar
+  increment along the current heading and accumulates continuous displacement
+  before integer quantization. It does not jump to the absolute position of a
+  newly sampled curve. Fractional progress and collision rebasing are retained.
+- The same configured-range speed bound applies: the scalar increment is bounded
+  by `maxSlope + maxAbsBend * (generations - 1) + 2 * PI * maxAmplitude / minWavelength`.
+
+Defaults preserve existing runs and random-draw order. Drift without steering
+still shifts movement-choice noise, but cannot change paths at probability 1.
+Even with drift and time scale zero, steering can change a cell's motion as it
+moves through a spatially varying field. A zero heading can later become moving.
+Steering moves cells through a field, not the colored seed as one rigid image;
+collisions, quantization, and wraparound can still create repetition. Smooth
+noise does not guarantee smooth changes between the nine discrete headings.
 
 ## 4. Initial directions and spatial parameter fields
 

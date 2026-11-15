@@ -64,6 +64,7 @@ test('startup logs effective factor-scaled PN settings and active memory thresho
         CONFIG.simulation.seed = 7;
         CONFIG.coloring = { state0Alpha: 0.2, otherStatesAlpha: 0.3 };
         CONFIG.pn = { ...CONFIG.pn, mode: 'trajectory', noiseSpaceScale: 0.2, noiseTimeScale: 0.4,
+            noiseDrift: [0.08, -0.12], noiseSteering: true,
             maxCellsPerAxisPerLayer: 10,
             trajectory: { slope: [0, 0], bend: [0, 0], amplitude: [1, 2], wavelength: [8, 16],
                 phase: [0, 1], parameterNoise: { spaceScale: 0.12, channels: 'shared' } } };
@@ -76,6 +77,8 @@ test('startup logs effective factor-scaled PN settings and active memory thresho
     assert.equal(record.simulation.numGenerations, 4);
     assert.equal(record.algorithm.noiseSpaceScale, 0.05);
     assert.equal(record.algorithm.noiseTimeScale, 0.1);
+    assert.deepEqual(record.algorithm.noiseDrift, [0.02, -0.03]);
+    assert.equal(record.algorithm.noiseSteering, true);
     assert.equal(record.algorithm.trajectory.parameterNoise.spaceScale, 0.03);
     assert.deepEqual(record.algorithm.trajectory.amplitude, [4, 8]);
     assert.deepEqual(record.algorithm.trajectory.wavelength, [32, 64]);

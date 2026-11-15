@@ -136,9 +136,10 @@ function logSimulationSettings(settings, coloring, seedSource) {
         }
     } else {
         const { mode, boundary, maxCellsPerAxisPerLayer, forwardProbability,
-            noiseSpaceScale, noiseTimeScale, trajectory } = settings.pn;
+            noiseSpaceScale, noiseTimeScale, noiseDrift, noiseSteering, trajectory } = settings.pn;
         algorithmSettings = {
-            mode, boundary, maxCellsPerAxisPerLayer, forwardProbability, noiseSpaceScale, noiseTimeScale
+            mode, boundary, maxCellsPerAxisPerLayer, forwardProbability, noiseSpaceScale, noiseTimeScale,
+            noiseDrift, noiseSteering
         };
         if (mode === "trajectory") {
             const { slope, bend, amplitude, wavelength, phase, parameterNoise } = trajectory;

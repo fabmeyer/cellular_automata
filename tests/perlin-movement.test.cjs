@@ -961,3 +961,187 @@ test('renderer draws exterior cells without reframing and reinitialization clear
     subject.initialize();
     assert.equal(subject.grid.outsideLayers.length, 0);
 });
+
+function steeringSimulation(mode, boundary, options = {}) {
+    const samples = [];
+    const harness = createHarness({
+        simulation: { algorithm: 'PN', states: 3 },
+        initial: { mode: 'random' }, memory: { enabled: false },
+        pn: {
+            mode, boundary, maxCellsPerAxisPerLayer: options.limit ?? 1,
+            forwardProbability: 1, noiseSpaceScale: 0, noiseTimeScale: 0,
+            noiseDrift: [0.1, 0.1], noiseSteering: true,
+            trajectory: {
+                slope: [1, 1], bend: [0, 0], amplitude: [0, 0],
+                wavelength: [32, 32], phase: [0, 0],
+                parameterNoise: { spaceScale: 0, channels: 'shared' },
+                ...options.trajectory
+            },
+            ...options.pn
+        }
+    }, { random: () => 0, noise: (x, y, t) => {
+        samples.push([x, y, t]);
+        return options.noise ? options.noise(x, y, t) : (x < 0 ? 7.5 / 9 : 5.5 / 9);
+    } });
+    const { subject } = harness;
+    subject.initialize();
+    for (const [x, y, state] of options.cells ?? [[3, 3, 2]]) {
+        subject.grid.set(x, y, 0, state);
+    }
+    subject.algorithm.initialize(subject.grid);
+    samples.length = 0;
+    return { ...harness, samples };
+}
+
+test('sliding fields steer both modes at probability one with wrap and grow boundaries', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const boundary of ['wrap', 'grow']) {
+            const { subject, samples } = steeringSimulation(mode, boundary, { cells: [[7, 7, 2]] });
+            subject.step();
+            subject.step();
+            assert.ok(samples.some(([x, y, t]) => x === -0.1 && y === -0.1 && t === 0));
+            if (boundary === 'wrap') {
+                assert.equal(subject.grid.get(0, 0, 2), 2, mode);
+            } else {
+                assert.deepEqual(plain([...subject.grid.outsideLayers[2].values()]),
+                    [{ x: 8, y: 8, state: 2 }], mode);
+            }
+        }
+    }
+});
+
+test('drift and temporal evolution are independent and factor-normalized in all noise channels', () => {
+    for (const channels of ['shared', 'separate']) {
+        const runs = [1, 4].map(factor => {
+            const run = steeringSimulation('trajectory', 'wrap', {
+                pn: { noiseSpaceScale: 0.2, noiseTimeScale: 0.3, noiseDrift: [0.1, -0.2],
+                    trajectory: {
+                        slope: [0, 0], bend: [0, 0], amplitude: [0, 0],
+                        wavelength: [32, 32], phase: [0, 0],
+                        parameterNoise: { spaceScale: 0.4, channels }
+                    } }
+            });
+            const config = structuredClone(run.config);
+            config.grid.factor = factor;
+            const subject = new run.classes.Simulation(config, () => 0, (...coords) => {
+                run.samples.push(coords);
+                return 0.5;
+            });
+            run.samples.length = 0;
+            subject.algorithm.perlinDirection(2 * factor, 3 * factor, 5 * factor);
+            subject.algorithm.sampleTrajectory(2 * factor, 3 * factor, [1, 0], 5 * factor);
+            return run.samples;
+        });
+        assert.deepEqual(runs[0], runs[1]);
+        for (const [index, expected] of [[0, [-0.1, 1.6, 1.5]], [1, [0.3, 2.2, 2.5]]]) {
+            runs[0][index].forEach((value, axis) => assert.ok(Math.abs(value - expected[axis]) < 1e-12));
+        }
+        assert.equal(runs[0].length, channels === 'shared' ? 2 : 6);
+    }
+});
+
+test('trajectory steering resamples curve parameters at current positions without absolute jumps', () => {
+    for (const boundary of ['wrap', 'grow']) {
+        const { subject, samples } = steeringSimulation('trajectory', boundary, {
+            limit: 2,
+            trajectory: { slope: [0.5, 1.5], amplitude: [0, 10], wavelength: [1000, 1000],
+                phase: [0, 2 * Math.PI], parameterNoise: { spaceScale: 0.2, channels: 'shared' } },
+            noise: (x, y, t) => t === 0 ? 5.5 / 9 : (y < 0.5 ? 0 : 1)
+        });
+        let previous = [0, 0];
+        const slopes = [];
+        for (let z = 1; z <= 6; z++) {
+            samples.length = 0;
+            subject.step();
+            const trajectory = [...subject.algorithm.trajectories.values()][0];
+            slopes.push(trajectory.parameters.slope);
+            for (let axis = 0; axis < 2; axis++) {
+                assert.ok(Math.abs(trajectory.offset[axis] - previous[axis]) <= 1.6);
+            }
+            previous = [...trajectory.offset];
+            assert.ok(samples.some(([, , t]) => t === 1), 'parameter channel sampled each layer');
+        }
+        assert.ok(new Set(slopes).size > 1, 'parameters change as the field slides');
+        assert.ok(previous[0] > 3, 'fractional increments accumulate into actual movement');
+    }
+});
+
+test('steered trajectory collisions retain state and fractional progress', () => {
+    for (const boundary of ['wrap', 'grow']) {
+        const { subject } = steeringSimulation('trajectory', boundary, {
+            cells: [[2, 3, 1], [4, 3, 2]],
+            pn: { noiseSpaceScale: 1, noiseTimeScale: 1, noiseDrift: [0, 0] },
+            trajectory: { slope: [0.6, 0.6] },
+            noise: (x, y, t) => t < 2 && x > 3 ? 3.5 / 9 : 5.5 / 9
+        });
+        subject.step();
+        subject.step();
+        assert.equal(subject.grid.get(3, 3, 2), 2);
+        assert.equal(subject.algorithm.trajectories.size, 1);
+        for (let z = 3; z <= 5; z++) subject.step();
+        assert.equal(subject.grid.get(4, 3, 5), 2);
+    }
+});
+
+test('steering validates sampled noise and retains configured movement limits', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        const { subject } = steeringSimulation(mode, 'wrap');
+        subject.algorithm.noise = () => NaN;
+        assert.throws(() => subject.step(), /Invalid PN .*noise sample/);
+    }
+    assert.throws(() => steeringSimulation('trajectory', 'wrap', {
+        trajectory: { slope: [0, 2] }
+    }), /speed bound/);
+});
+
+test('temporal scale steers probability-one paths independently of drift', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        const runs = [0.1, 1].map(noiseTimeScale => {
+            const { subject } = steeringSimulation(mode, 'wrap', {
+                pn: { noiseDrift: [0, 0], noiseTimeScale },
+                noise: (x, y, t) => t < 0.5 ? 5.5 / 9 : 7.5 / 9
+            });
+            subject.step();
+            subject.step();
+            return layerStates(subject.grid, 2);
+        });
+        assert.notDeepEqual(runs[0], runs[1], mode);
+    }
+});
+
+test('omitted drift and steering preserve seeded geometry, sampling, and random draws', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const boundary of ['wrap', 'grow']) {
+            const run = explicit => {
+                const { config, classes } = createHarness({
+                    simulation: { algorithm: 'PN', states: 3 },
+                    initial: { mode: 'random' }, memory: { enabled: false },
+                    pn: { mode, boundary, forwardProbability: 0.7,
+                        noiseSpaceScale: 0.1, noiseTimeScale: 0.1,
+                        noiseDrift: [0, 0], noiseSteering: false }
+                });
+                if (!explicit) {
+                    delete config.pn.noiseDrift;
+                    delete config.pn.noiseSteering;
+                }
+                const samples = [];
+                const random = seededRandom(123);
+                let draws = 0;
+                const subject = new classes.Simulation(config, () => { draws++; return random(); },
+                    (...coords) => {
+                        samples.push(coords);
+                        return 0.5 + 0.3 * Math.sin(coords.reduce((a, b) => a + b, 0));
+                    });
+                subject.initialize();
+                while (subject.step() !== null) {}
+                return {
+                    layers: Array.from({ length: 8 }, (_, z) => layerStates(subject.grid, z)),
+                    outside: subject.grid.outsideLayers
+                        ? plain(subject.grid.outsideLayers.map(layer => [...layer.values()])) : null,
+                    samples, draws
+                };
+            };
+            assert.deepEqual(run(false), run(true), `${mode}/${boundary}`);
+        }
+    }
+});

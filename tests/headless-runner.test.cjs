@@ -93,7 +93,7 @@ test('seeded browser runs repeat at factors 1 and 4 with aligned initial pattern
     const browser = await puppeteer.launch({ headless: true });
     t.after(() => browser.close());
 
-    async function run(factor, seed = 123) {
+    async function run(factor, seed = 123, pn = {}) {
         const page = await browser.newPage();
         const records = [];
         const pending = [];
@@ -106,7 +106,7 @@ test('seeded browser runs repeat at factors 1 and 4 with aligned initial pattern
             }
         });
         try {
-            await page.evaluateOnNewDocument(({ factor, seed }) => {
+            await page.evaluateOnNewDocument(({ factor, seed, pn }) => {
                 window.addEventListener('DOMContentLoaded', () => {
                     CONFIG.grid = { factor, cols: 4 * factor, rows: 4 * factor,
                         baseDepth: 4 * factor, cellSize: 2 };
@@ -117,12 +117,13 @@ test('seeded browser runs repeat at factors 1 and 4 with aligned initial pattern
                         forwardProbability: 1, maxCellsPerAxisPerLayer: 10,
                         trajectory: { slope: [0.25, 0.25], bend: [0, 0], amplitude: [0, 0],
                             wavelength: [4, 4], phase: [0, 0],
-                            parameterNoise: { spaceScale: 0.1, channels: 'shared' } } };
+                            parameterNoise: { spaceScale: 0.1, channels: 'shared' } },
+                        ...pn };
                     CONFIG.memory.enabled = false;
                     CONFIG.view.orientation = 'sideways';
                     CONFIG.view.presets.sideways.canvasScale = [1, 1];
                 });
-            }, { factor, seed });
+            }, { factor, seed, pn });
             await page.goto(origin);
             await page.waitForFunction(() => window.simulationDone || window.simulationError, { timeout: 30000 });
             const result = await page.evaluate(() => {
@@ -177,6 +178,22 @@ test('seeded browser runs repeat at factors 1 and 4 with aligned initial pattern
     assert.equal(records.length, 6);
     assert.deepEqual(JSON.parse(records[4][2]), generated.record);
     assert.deepEqual(JSON.parse(records[5][2]), replay.record);
+    for (const mode of ['legacy', 'trajectory']) {
+        const pn = {
+            mode, noiseSpaceScale: 0.2, noiseTimeScale: 0, noiseDrift: [0.4, 0.4],
+            noiseSteering: true, maxCellsPerAxisPerLayer: 1,
+            trajectory: { slope: [0.5, 1], bend: [0, 0], amplitude: [0, 0],
+                wavelength: [16, 16], phase: [0, 0],
+                parameterNoise: { spaceScale: 0.2, channels: 'separate' } }
+        };
+        const sliding = await run(1, 123, pn);
+        assert.deepEqual(withoutTimestamp(await run(1, 123, pn)), withoutTimestamp(sliding));
+        const stationary = await run(1, 123, { ...pn, noiseDrift: [0, 0] });
+        assert.deepEqual(sliding.layers[0], stationary.layers[0]);
+        assert.notDeepEqual(sliding.layers.slice(1), stationary.layers.slice(1), mode);
+        assert.equal(sliding.record.algorithm.noiseSteering, true);
+        assert.deepEqual(sliding.record.algorithm.noiseDrift, [0.4, 0.4]);
+    }
 });
 
 test('GridRenderer applies antialiasing to the p5 WebGL context', async t => {

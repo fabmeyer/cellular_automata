@@ -28,31 +28,37 @@ class PerlinMovement {
     }
 
     perlinDirection(x, y, z) {
-        const { noiseSpaceScale, noiseTimeScale } = this.settings.pn;
-        const value = this.settings.pn.mode === "trajectory"
-            ? this.checkedNoise(x * noiseSpaceScale, y * noiseSpaceScale, z * noiseTimeScale)
-            : this.noise(x * noiseSpaceScale, y * noiseSpaceScale, z * noiseTimeScale);
+        const value = this.sampleNoise(x, y, z);
         return MOVEMENT_DIRECTIONS[Math.min(Math.floor(value * MOVEMENT_DIRECTIONS.length),
             MOVEMENT_DIRECTIONS.length - 1)];
+    }
+
+    sampleNoise(x, y, t, spaceScale = this.settings.pn.noiseSpaceScale, channel = 0) {
+        const { noiseDrift, noiseTimeScale, mode, noiseSteering } = this.settings.pn;
+        const nx = x * spaceScale - t * noiseDrift[0];
+        const ny = y * spaceScale - t * noiseDrift[1];
+        const nt = channel + t * noiseTimeScale;
+        return mode === "trajectory" || noiseSteering
+            ? this.checkedNoise(nx, ny, nt) : this.noise(nx, ny, nt);
     }
 
     checkedNoise(x, y, z) {
         const value = this.noise(x, y, z);
         if (!Number.isFinite(value) || value < 0 || value > 1) {
-            throw new Error(`Invalid PN trajectory noise sample: ${value}; expected a number in [0, 1]`);
+            const kind = this.settings.pn.mode === "trajectory" ? "trajectory" : "steering";
+            throw new Error(`Invalid PN ${kind} noise sample: ${value}; expected a number in [0, 1]`);
         }
         return value;
     }
 
-    sampleTrajectory(x, y, direction) {
+    sampleTrajectory(x, y, direction, t = 0) {
         const { parameterNoise, ...ranges } = this.settings.pn.trajectory;
-        const nx = x * parameterNoise.spaceScale;
-        const ny = y * parameterNoise.spaceScale;
-        const shared = parameterNoise.channels === "shared" ? this.checkedNoise(nx, ny, 1) : null;
+        const shared = parameterNoise.channels === "shared"
+            ? this.sampleNoise(x, y, t, parameterNoise.spaceScale, 1) : null;
         const parameters = {};
         for (const [index, name] of TRAJECTORY_PARAMETERS.entries()) {
             // Integer z offsets below p5's z period keep the parameter fields distinct.
-            const sample = shared ?? this.checkedNoise(nx, ny, index + 1);
+            const sample = shared ?? this.sampleNoise(x, y, t, parameterNoise.spaceScale, index + 1);
             const [min, max] = ranges[name];
             parameters[name] = min + sample * (max - min);
         }
@@ -115,8 +121,11 @@ class PerlinMovement {
             return;
         }
         const { cols, rows } = this.settings.grid;
-        const { noiseSpaceScale, noiseTimeScale, maxCellsPerAxisPerLayer } = this.settings.pn;
+        const { noiseSteering, maxCellsPerAxisPerLayer } = this.settings.pn;
         const phase = this.random();
+        if (noiseSteering && (!Number.isFinite(phase) || phase < 0 || phase >= 1)) {
+            throw new Error(`Invalid PN steering movement phase: ${phase}; expected a number in [0, 1)`);
+        }
         const arrivals = new Map();
         const previous = grid.layer(z - 1);
         const next = grid.layer(z);
@@ -131,9 +140,9 @@ class PerlinMovement {
                 if (!direction) {
                     throw new Error(`Missing movement history for occupied cell (${x}, ${y})`);
                 }
-                const sample = (this.noise(x * noiseSpaceScale, y * noiseSpaceScale,
-                    (z - 1) * noiseTimeScale) + phase) % 1;
-                const preferred = direction.map(value => value * maxCellsPerAxisPerLayer);
+                const sample = (this.sampleNoise(x, y, z - 1) + phase) % 1;
+                const heading = noiseSteering ? this.perlinDirection(x, y, z - 1) : direction;
+                const preferred = heading.map(value => value * maxCellsPerAxisPerLayer);
                 const move = this.chooseMovement(preferred, sample);
                 const targetX = wrapIndex(x + move.dx, cols);
                 const targetY = wrapIndex(y + move.dy, rows);
@@ -155,10 +164,11 @@ class PerlinMovement {
 
     stepOutward(grid, z) {
         const { cols, rows } = this.settings.grid;
-        const { mode, noiseSpaceScale, noiseTimeScale, maxCellsPerAxisPerLayer } = this.settings.pn;
+        const { mode, noiseSteering, maxCellsPerAxisPerLayer } = this.settings.pn;
         const phase = this.random();
-        if (mode === "trajectory" && (!Number.isFinite(phase) || phase < 0 || phase >= 1)) {
-            throw new Error(`Invalid PN trajectory movement phase: ${phase}; expected a number in [0, 1)`);
+        if ((mode === "trajectory" || noiseSteering) && (!Number.isFinite(phase) || phase < 0 || phase >= 1)) {
+            throw new Error(`Invalid PN ${mode === "trajectory" ? "trajectory" : "steering"} ` +
+                `movement phase: ${phase}; expected a number in [0, 1)`);
         }
         const arrivals = new Map();
         const moveCell = (x, y, state) => {
@@ -174,11 +184,10 @@ class PerlinMovement {
             if (mode === "legacy" && !direction) {
                 throw new Error(`Missing movement history for occupied cell (${x}, ${y})`);
             }
-            const planned = trajectory ? this.trajectoryMovement(trajectory, z) : null;
-            const preferred = planned ? planned.direction : direction.map(value => value * maxCellsPerAxisPerLayer);
-            const noiseValue = mode === "trajectory"
-                ? this.checkedNoise(x * noiseSpaceScale, y * noiseSpaceScale, (z - 1) * noiseTimeScale)
-                : this.noise(x * noiseSpaceScale, y * noiseSpaceScale, (z - 1) * noiseTimeScale);
+            const planned = trajectory ? this.trajectoryMovement(trajectory, z, x, y) : null;
+            const heading = !trajectory && noiseSteering ? this.perlinDirection(x, y, z - 1) : direction;
+            const preferred = planned ? planned.direction : heading.map(value => value * maxCellsPerAxisPerLayer);
+            const noiseValue = this.sampleNoise(x, y, z - 1);
             const sample = (noiseValue + phase) % 1;
             const move = this.chooseMovement(preferred, sample);
             const targetX = x + move.dx;
@@ -227,19 +236,25 @@ class PerlinMovement {
         this.trajectories = nextTrajectories;
     }
 
-    trajectoryMovement(trajectory, z) {
-        const { slope, bend, amplitude, wavelength, phase } = trajectory.parameters;
-        const elapsed = z - trajectory.origin.z;
-        let displacement = slope * elapsed + bend * elapsed * (z + trajectory.origin.z) / 2;
-        if (amplitude !== 0) {
-            const frequency = 2 * Math.PI / wavelength;
-            displacement += amplitude * (Math.sin(frequency * z + phase) -
-                Math.sin(frequency * trajectory.origin.z + phase));
+    trajectoryMovement(trajectory, z, x, y) {
+        let nextTrajectory;
+        if (this.settings.pn.noiseSteering) {
+            nextTrajectory = this.steerTrajectory(trajectory, z, x, y);
+        } else {
+            const { slope, bend, amplitude, wavelength, phase } = trajectory.parameters;
+            const elapsed = z - trajectory.origin.z;
+            let displacement = slope * elapsed + bend * elapsed * (z + trajectory.origin.z) / 2;
+            if (amplitude !== 0) {
+                const frequency = 2 * Math.PI / wavelength;
+                displacement += amplitude * (Math.sin(frequency * z + phase) -
+                    Math.sin(frequency * trajectory.origin.z + phase));
+            }
+            // Evaluate from the retained origin instead of accumulating decimal rounding errors.
+            const offset = trajectory.origin.offset.map((value, axis) =>
+                value + trajectory.direction[axis] * displacement);
+            nextTrajectory = { ...trajectory, offset };
         }
-        // Evaluate from the retained origin instead of accumulating decimal rounding errors.
-        const offset = trajectory.origin.offset.map((value, axis) =>
-            value + trajectory.direction[axis] * displacement);
-        const direction = offset.map((value, axis) => {
+        const direction = nextTrajectory.offset.map((value, axis) => {
             const movement = Math.trunc(value) - Math.trunc(trajectory.offset[axis]);
             return movement === 0 ? 0 : movement;
         });
@@ -247,7 +262,19 @@ class PerlinMovement {
         if (direction.some(value => !Number.isInteger(value) || Math.abs(value) > limit)) {
             throw new Error(`PN trajectory exceeded ${limit} cells per axis at layer ${z}`);
         }
-        return { direction, trajectory: { ...trajectory, offset } };
+        return { direction, trajectory: nextTrajectory };
+    }
+
+    steerTrajectory(trajectory, z, x, y) {
+        const heading = this.perlinDirection(x, y, z - 1);
+        const sampled = this.sampleTrajectory(x, y, heading, z - 1);
+        const { slope, bend, amplitude, wavelength, phase } = sampled.parameters;
+        const frequency = 2 * Math.PI / wavelength;
+        // Difference the curve with one parameter set, not two differently sampled positions.
+        const increment = slope + bend * (z - 0.5) +
+            2 * amplitude * Math.cos(frequency * (z - 0.5) + phase) * Math.sin(frequency / 2);
+        const offset = trajectory.offset.map((value, axis) => value + heading[axis] * increment);
+        return { ...trajectory, direction: [...heading], parameters: sampled.parameters, offset };
     }
 
     mergeTrajectories(trajectories, z) {
@@ -281,7 +308,6 @@ class PerlinMovement {
 
     stepTrajectory(grid, z) {
         const { cols, rows } = this.settings.grid;
-        const { noiseSpaceScale, noiseTimeScale } = this.settings.pn;
         const phase = this.random();
         if (!Number.isFinite(phase) || phase < 0 || phase >= 1) {
             throw new Error(`Invalid PN trajectory movement phase: ${phase}; expected a number in [0, 1)`);
@@ -300,9 +326,8 @@ class PerlinMovement {
                 if (!trajectory) {
                     throw new Error(`Missing trajectory history for occupied cell (${x}, ${y})`);
                 }
-                const planned = this.trajectoryMovement(trajectory, z);
-                const sample = (this.checkedNoise(x * noiseSpaceScale, y * noiseSpaceScale,
-                    (z - 1) * noiseTimeScale) + phase) % 1;
+                const planned = this.trajectoryMovement(trajectory, z, x, y);
+                const sample = (this.sampleNoise(x, y, z - 1) + phase) % 1;
                 const move = this.chooseMovement(planned.direction, sample);
                 const key = wrapIndex(x + move.dx, cols) * rows + wrapIndex(y + move.dy, rows);
                 const arrival = arrivals.get(key) || { state: 0, direction: [0, 0], trajectories: [] };

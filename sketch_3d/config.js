@@ -11,7 +11,7 @@ const CONFIG = {
         algorithm: "PN", // "CA", "PN"
         get states() { return Math.min(9, CONFIG.initial.patternSize); },
         get numGenerations() {
-            return 1.75 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
+            return 1.0 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
         }, // includes the initial layer
         retainHistory: false, // true keeps all simulated layers in memory
         seed: null, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
@@ -30,10 +30,12 @@ const CONFIG = {
     pn: {
         mode: "legacy", // "legacy", "trajectory"
         boundary: "wrap", // "wrap", "grow"
-        maxCellsPerAxisPerLayer: 100,
-        forwardProbability: 1.0,
-        noiseSpaceScale: 0.0025,
-        noiseTimeScale: 0.00125,
+        maxCellsPerAxisPerLayer: 1.0, // integer
+        forwardProbability: 0.5,
+        noiseSpaceScale: 0.0005,
+        noiseTimeScale: 0.5,
+        noiseDrift: [1.0, 1.0], // noise-coordinate units per layer along x/y
+        noiseSteering: true,
         trajectory: {
             slope: [0.0, 0.0], // cells per layer
             bend: [-0.002, 0.002], // change in slope per layer
@@ -130,10 +132,18 @@ function resolveConfig(config) {
     };
     let pn = config.pn;
     if (simulation.algorithm === "PN") {
+        const noiseDrift = Object.hasOwn(pn, "noiseDrift") ? pn.noiseDrift : [0, 0];
+        const noiseSteering = Object.hasOwn(pn, "noiseSteering") ? pn.noiseSteering : false;
+        requireValue(Array.isArray(noiseDrift) && noiseDrift.length === 2 &&
+            float32(noiseDrift[0]) && float32(noiseDrift[1]),
+            "pn.noiseDrift must contain two finite float32 numbers");
+        requireValue(typeof noiseSteering === "boolean", "pn.noiseSteering must be boolean");
         nonnegativeNumber(pn.noiseSpaceScale, "pn.noiseSpaceScale");
         nonnegativeNumber(pn.noiseTimeScale, "pn.noiseTimeScale");
         pn = {
             ...pn,
+            noiseDrift: scaleRange(noiseDrift, 1 / factor),
+            noiseSteering,
             noiseSpaceScale: scale(pn.noiseSpaceScale, 1 / factor),
             noiseTimeScale: scale(pn.noiseTimeScale, 1 / factor)
         };

@@ -19,6 +19,7 @@ the configuration is resolved:
 | --- | --- |
 | `initial.patternSize`, `initial.resolutionFactor` | Value times `f` |
 | `pn.noiseSpaceScale`, `pn.noiseTimeScale` | Value divided by `f` |
+| `pn.noiseDrift` | Each component divided by `f` |
 | `pn.trajectory.parameterNoise.spaceScale` | Value divided by `f` |
 | `pn.trajectory.bend` | Each endpoint divided by `f` |
 | `pn.trajectory.amplitude`, `pn.trajectory.wavelength` | Each endpoint times `f` |
@@ -161,8 +162,10 @@ does not expand to follow them.
 | `pn.boundary` | `"grow"` | `"wrap"` wraps around plane edges; `"grow"` permits movement beyond them. |
 | `pn.maxCellsPerAxisPerLayer` | `100` | Positive integer movement limit per x or y axis and layer. In legacy mode it is also the continued-heading speed; in trajectory mode it is a speed ceiling. |
 | `pn.forwardProbability` | `1.0` | Probability from 0 to 1 of following the preferred movement. The remaining probability is split equally across eight alternative adjacent directions. |
-| `pn.noiseSpaceScale` | `0.01` | Nonnegative factor-1 increment per cell in the movement noise's x/y inputs. Zero fixes those inputs at zero. |
+| `pn.noiseSpaceScale` | `0.01` | Nonnegative factor-1 increment per cell in the movement noise's x/y inputs. Zero removes spatial dependence; drift can still change those inputs. |
 | `pn.noiseTimeScale` | `0.5` | Nonnegative factor-1 increment per layer in the movement noise's z input. Zero fixes that input at zero. |
+| `pn.noiseDrift` | `[0, 0]` | Two signed finite float32 values: x/y noise-coordinate translation per factor-1 layer. Equal positive components slide the field diagonally toward positive x/y. |
+| `pn.noiseSteering` | `false` | Resample preferred headings each layer in both modes; trajectory also resamples its curve parameters. At probability 1, cells follow the field rather than retaining their initial headings. |
 
 The movement limit applies separately to x and y, not to Euclidean distance.
 Only destinations are occupied: a multi-cell jump can leave gaps.
@@ -176,19 +179,40 @@ each `noise()` call. Using the effective, factor-adjusted scales, the movement
 sample for layer `z` is:
 
 ```text
-noise(x * noiseSpaceScale, y * noiseSpaceScale, (z - 1) * noiseTimeScale)
+t = z - 1
+noise(x * noiseSpaceScale - t * noiseDrift[0],
+      y * noiseSpaceScale - t * noiseDrift[1],
+      t * noiseTimeScale)
 ```
 
 At initialization, the third coordinate is `0`. The returned value selects
 one of nine initial headings, including a stationary `[0, 0]` heading. During
 movement, one shared pseudorandom phase is added to the sample modulo 1 to
-select the preferred movement or an alternative. At `forwardProbability: 1`,
-the movement sample does not change the selected path after initialization.
+select the preferred movement or an alternative. With `noiseSteering: false`,
+at `forwardProbability: 1` the movement sample does not change the selected
+path after initialization.
+
+Drift translates the field; time scale evolves its shape. For pure diagonal
+sliding, set `noiseTimeScale: 0`, `noiseDrift: [0.01, 0.01]`, and
+`noiseSteering: true`. These settings work with either mode, including at
+probability 1. This is a steering field, not rigid translation of the colored
+initial pattern. Drift speed is in noise units, not grid cells; apparent speed
+in cells depends on the spatial scale.
+
+With steering enabled, trajectory parameters use the current cell coordinates
+and `parameterNoise.spaceScale`, the same drift offsets, and z coordinate
+`channel + t * noiseTimeScale`. Shared channels use 1; separate channels use
+1 through 5. Each step differences a curve using that step's parameter set
+and accumulates displacement, preserving fractional progress without jumping
+to a newly sampled absolute position. The existing speed bound still applies.
+With steering disabled, curve parameters remain sampled only at initialization.
+Omitting both new settings is equivalent to zero drift and disabled steering.
 
 These scales are noise-coordinate increments per cell or layer, not pixels,
 seconds, or guaranteed wavelengths. Smaller spatial increments generally give
 larger regions of similar samples; smaller time increments vary the samples
-more gradually. A zero scale freezes a coordinate, not the noise value itself.
+more gradually. Zero spatial scale removes position dependence; zero time scale
+freezes the z coordinate. Drift can still change x/y coordinates over layers.
 
 For factor 4 with the current settings, the effective movement scales are `0.0025` and
 `0.125`. At cell `(100, 200)` for layer `41`, the sample inputs are
