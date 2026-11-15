@@ -259,7 +259,7 @@ All initial state draws are uniform across the configured states, including 0.
 | --- | --- | --- |
 | `initial.mode` | `"seed"` | `"random"` fills the plane with random blocks; `"seed"` creates a reusable square pattern. |
 | `initial.patternSize` | `32` | Positive factor-1 side length of the seed square. Its effective size must fit both plane dimensions. Ignored in random mode, except that the default `simulation.states` getter reads it. |
-| `initial.resolutionFactor` | `1` | Positive factor-1 side length of same-state blocks. In seed mode it must divide `patternSize` exactly. |
+| `initial.resolutionFactor` | `1` | Factor-1 side length of same-state blocks. It may be fractional, but after multiplication by `grid.factor` it must be a positive integer; in seed mode it must divide the effective `patternSize` exactly. |
 | `initial.symmetry` | `"D4"` | `"plain"` or `"D4"` rotation/reflection symmetry, applied to the coarse seed. Seed mode only. |
 | `initial.placement` | `"tiled"` | `"tiled"`, `"center"`, or `"corners"`; seed mode only. |
 | `initial.loopPattern` | `true` | In corner placement, `true` repeats the pattern across the plane; `false` leaves the surroundings at state 0. Ignored for other placements. |
@@ -269,6 +269,9 @@ aligns the repetition around the centered block. Corner placement stamps the
 same seed into all four corners, with the last stamp winning if they overlap.
 Random mode clips partial blocks at plane edges. Only the initial layer is
 block-expanded; later generations evolve at cell resolution.
+For example, `resolutionFactor: 0.5` with `grid.factor: 4` produces 2x2
+blocks. The product is checked using JavaScript `Number` precision without
+rounding.
 
 ## Memory
 

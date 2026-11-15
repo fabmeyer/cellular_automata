@@ -1,7 +1,7 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        factor: 4,
+        factor: 1,
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
@@ -14,7 +14,7 @@ const CONFIG = {
             return 1.75 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
         }, // includes the initial layer
         retainHistory: false, // true keeps all simulated layers in memory
-        seed: 1268502912, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
+        seed: null, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
         timeInterval: 1
     },
     coloring: {
@@ -28,12 +28,12 @@ const CONFIG = {
         cycleUniform: true
     },
     pn: {
-        mode: "trajectory", // "legacy", "trajectory"
-        boundary: "grow", // "wrap", "grow"
+        mode: "legacy", // "legacy", "trajectory"
+        boundary: "wrap", // "wrap", "grow"
         maxCellsPerAxisPerLayer: 100,
         forwardProbability: 1.0,
-        noiseSpaceScale: 0.02,
-        noiseTimeScale: 0.2,
+        noiseSpaceScale: 0.0025,
+        noiseTimeScale: 0.00125,
         trajectory: {
             slope: [0.0, 0.0], // cells per layer
             bend: [-0.002, 0.002], // change in slope per layer
@@ -48,8 +48,8 @@ const CONFIG = {
     },
     initial: {
         mode: "seed", // "random", "seed"
-        patternSize: 32,
-        resolutionFactor: 2, // same-state block side length; must divide patternSize in seed mode
+        patternSize: 16,
+        resolutionFactor: 2, // scaled block side must be a positive integer and divide the seed size
         symmetry: "D4", // "plain", "D4"
         placement: "tiled", // "tiled", "center", "corners"
         loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
@@ -60,7 +60,7 @@ const CONFIG = {
         matchRunFraction: 1 // fraction of state-based history required as consecutive matches (at most depth / 4 for periods up to depth / 4)
     },
     view: {
-        orientation: "vertical", // "sideways", "vertical"
+        orientation: "sideways", // "sideways", "vertical"
         presets: {
             sideways: {
                 depthMultiplier: 1,
@@ -120,7 +120,6 @@ function resolveConfig(config) {
     const scale = (value, multiplier) => typeof value === "number" ? value * multiplier : value;
     const scaleRange = (range, multiplier) => Array.isArray(range)
         ? range.map(value => scale(value, multiplier)) : range;
-    positiveInteger(config.initial.resolutionFactor, "initial.resolutionFactor");
     if (config.initial.mode === "seed") {
         positiveInteger(config.initial.patternSize, "initial.patternSize");
     }

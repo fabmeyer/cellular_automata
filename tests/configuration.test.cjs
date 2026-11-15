@@ -327,7 +327,7 @@ test('factor 1 preserves x-major random draws and existing plain/D4 seed states'
     }
 });
 
-test('initial resolution factors reject invalid integers and nondivisible seed lengths', () => {
+test('initial resolution factors reject invalid effective sizes and nondivisible seed lengths', () => {
     for (const mode of ['seed', 'random']) {
         for (const resolutionFactor of [0, -1, 1.5, NaN, Infinity, 2147483648, '2', undefined]) {
             assert.throws(() => createHarness({ initial: { mode, resolutionFactor } }),
@@ -343,6 +343,44 @@ test('initial resolution factors reject invalid integers and nondivisible seed l
     }, { random: () => 0.75 });
     subject.initialize();
     assert.ok(subject.grid.layer(0).every(state => state === 6));
+});
+
+test('fractional resolution factors produce integral blocks after grid scaling', () => {
+    for (const mode of ['seed', 'random']) {
+        for (const [resolutionFactor, effective] of [[0.25, 1], [0.5, 2], [1.5, 6]]) {
+            let draws = 0;
+            const { subject, config } = createHarness({
+                grid: { factor: 4, cols: 12, rows: 12 },
+                simulation: { states: 3 },
+                initial: { mode, patternSize: 3, resolutionFactor, symmetry: 'plain', placement: 'tiled' }
+            }, { random: () => (draws++ % 3 + 0.5) / 3 });
+            subject.initialize();
+            assert.equal(config.initial.resolutionFactor, resolutionFactor);
+            assert.equal(subject.settings.initial.resolutionFactor, effective);
+            assert.equal(draws, (12 / effective) ** 2);
+            for (let x = 0; x < 12; x++) {
+                for (let y = 0; y < 12; y++) {
+                    assert.equal(subject.grid.get(x, y, 0),
+                        subject.grid.get(Math.floor(x / effective) * effective,
+                            Math.floor(y / effective) * effective, 0));
+                }
+            }
+        }
+    }
+});
+
+test('fractional resolution factors reject nonintegral or too-small effective sizes', () => {
+    for (const mode of ['seed', 'random']) {
+        for (const resolutionFactor of [0.2, 0.375]) {
+            assert.throws(() => createHarness({
+                grid: { factor: 4 }, initial: { mode, resolutionFactor }
+            }), /initial\.resolutionFactor must be a positive 32-bit integer/);
+        }
+    }
+    assert.throws(() => createHarness({
+        grid: { factor: 4, cols: 12, rows: 12 },
+        initial: { mode: 'seed', patternSize: 3, resolutionFactor: 1.25 }
+    }), /initial\.resolutionFactor must divide initial\.patternSize exactly/);
 });
 
 test('CA and PN evolve coarse initial blocks at full cell resolution', () => {
@@ -1018,9 +1056,6 @@ test('factor and seed reject invalid values and validate scaled results', () => 
     for (const seed of [null, 0, 4294967295]) {
         assert.doesNotThrow(() => createHarness({ simulation: { seed } }));
     }
-    assert.throws(() => createHarness({
-        grid: { factor: 4 }, initial: { mode: 'random', resolutionFactor: 0.5 }
-    }), /initial\.resolutionFactor/);
     assert.throws(() => createHarness({
         grid: { factor: 4 }, initial: { mode: 'random', resolutionFactor: 1073741824 }
     }), /initial\.resolutionFactor/);

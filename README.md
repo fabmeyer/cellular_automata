@@ -83,7 +83,7 @@ scaling, and reproducible-seed behavior.
 | `pn.trajectory.parameterNoise.channels` | `"separate"` parameter fields or one `"shared"` sample for all ranges | `"shared"` |
 | `initial.mode` | `"random"` plane or reusable `"seed"` | `"seed"` |
 | `initial.patternSize` | Factor-1 positive integer seed side length, fitting both plane dimensions after scaling | `32` |
-| `initial.resolutionFactor` | Factor-1 positive integer same-state block side length in X and Y; must divide `patternSize` exactly in seed mode | `1` |
+| `initial.resolutionFactor` | Factor-1 block side length; after scaling, must be a positive integer and divide the scaled pattern size in seed mode | `1` |
 | `initial.symmetry` | `"plain"` or `"D4"` | `"D4"` |
 | `initial.placement` | `"tiled"`, `"center"`, `"corners"` | `"tiled"` |
 | `initial.loopPattern` | Corners only: repeat the seed across the surroundings instead of leaving them empty (state 0); center and tiled always loop | `true` |
@@ -148,11 +148,16 @@ state into a 2x2 block: positions 0/1 share a state, 2/3 share a state, and so o
 along both axes. The final seed remains 8x8 cells. D4 symmetry is applied to the
 coarse seed before expansion, preserving exact symmetry. Tiling, placement, and
 looping retain their existing behavior, with blocks aligned to each placed seed.
-Seed mode rejects factors that do not divide the pattern size exactly. Random
-mode also uses same-state blocks, clipping partial blocks at the grid edges;
-a factor larger than the plane produces one block. Only initialization is
-coarsened: subsequent CA/PN generations still operate at full cell resolution,
+Seed mode rejects effective block sizes that do not divide the effective seed
+size exactly. Random mode also uses same-state blocks, clipping partial blocks
+at the grid edges; a block larger than the plane produces one block. Only
+initialization is coarsened: subsequent CA/PN generations still operate at full cell resolution,
 so the blocks need not remain uniform. Factor 1 preserves existing behavior.
+Fractional configured values are allowed when `initial.resolutionFactor *
+grid.factor` is a positive integer: for example, `0.5` with factor `4` produces
+2x2 blocks. In seed mode that effective block size must divide the effective
+pattern size. The multiplication uses JavaScript `Number` precision without
+rounding.
 
 The default is the active sketch's PN/D4-tiled/vertical configuration, not
 the corner placement described by older versions of this README.
