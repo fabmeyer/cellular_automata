@@ -70,7 +70,9 @@ independent.
 | --- | --- | --- | --- |
 | `pn.mode` | `"legacy"` or `"trajectory"` | Algorithm variant. | Switches fixed-heading movement to parameterized curves. |
 | `pn.boundary` | `"wrap"` or `"grow"` | Plane boundary behavior. | Wrap at the original edges, or continue outward without wrapping. |
-| `pn.maxCellsPerAxisPerLayer` | Integer 1 through 2147483647. | Maximum cells per x or y axis per layer. | Legacy continuation speed; trajectory speed ceiling. Larger jumps can leave gaps. |
+| `pn.movementUnit` | Null/omitted, or a positive divisor of `cellSize` with a safe integer tick ratio. | Lateral model units per movement tick. | `1` moves/draws at unit resolution without shrinking 4/8-unit cubes or z spacing. |
+| `pn.slope` | Null/omitted, or nonnegative ordered `[min,max]` within the movement budget. | Shared base speed in movement units per layer for both modes. | Larger slopes increase tilt/speed; fractional values accumulate progress. |
+| `pn.maxCellsPerAxisPerLayer` | Integer 1 through 2147483647. | Physical cap per axis/layer in cell-size units. | Legacy preferred speed when shared slope is omitted; otherwise a speed ceiling. Larger jumps can leave gaps. |
 | `pn.forwardProbability` | 0 through 1, inclusive. | Probability of selecting the preferred movement. | 1 follows a heading/trajectory exactly; smaller values allow more deviations. |
 | `pn.noiseSpaceScale` | 0 through the finite magnitude limit. | Noise-coordinate units per grid cell in x and y. | Smaller generally creates broader patches of similar initial directions and movement samples. |
 | `pn.noiseTimeScale` | 0 through the finite magnitude limit. | Noise-coordinate units per layer. | Smaller makes noise evolve more gradually. No path effect at probability 1 unless steering is enabled. |
@@ -81,15 +83,46 @@ The movement limit is global, not a sampled per-cell range. It limits each axis
 separately, not Euclidean distance: a diagonal move can travel the limit in both
 x and y.
 
+### Sub-cell movement
+
+Set `pn.movementUnit: 1` and `pn.slope: [1,1]` to advance one model unit per
+layer while retaining `cellSize: 4` or `8`. Shared slope `[4,4]`/`[8,8]`
+restores the corresponding base speed, still within a one-cell physical cap.
+This is actual sparse-position simulation, not antialiasing or render-only
+interpolation. Canvas/camera, cube geometry, initial population and spacing,
+and z pitch remain unchanged. A model unit need not project to one screen pixel.
+
+Legacy samples explicit slope ranges from movement noise and retains the
+sample with the path, resampling under steering. Trajectory uses the existing
+slope parameter-noise channel. Shared `pn.slope` overrides
+`pn.trajectory.slope`; null/omitted preserves that compatibility fallback and
+legacy's original preferred speed. Alternatives advance at most one movement
+unit per axis.
+
+Supplying movementUnit also enables footprint collisions and contained wrap.
+Strictly intersecting footprints merge as collision components; touching
+faces do not. Maximum state wins, and its destination center survives, with
+stable x/y tie-breaking. Existing heading and fractional-progress merge rules
+apply. Wrapping crossing footprints to the opposite edge includes clamping
+overhang; grow remains exterior-capable. These intentional differences can
+change an image even after restoring its old base speed.
+
+Occupied cubes render at actual positions, over an original coarse empty-cell
+backdrop whose sites containing occupied centers are omitted. Memory observes
+exact position/state snapshots in the original first-column-width stripe.
+Default null/omitted movementUnit retains existing dense PN behavior.
+See [Configuration](./CONFIG.md#one-unit-movement-with-unchanged-cube-size)
+for units, storage, and examples.
+
 ### Trajectory settings
 
 All names below are under `pn.trajectory`.
 
 | Setting | Allowed values | Unit / meaning | Visual effect |
 | --- | --- | --- | --- |
-| `slope` | Nonnegative `[min, max]`; maximum cannot exceed the global cap and must fit the shared budget. | Base scalar cells per layer along the retained direction. | Controls base tilt. With bend/amplitude zero, 0 is stationary and 0.5 gives a half-slope. |
-| `bend` | Signed finite `[min, max]`, subject to the shared budget. | Change in scalar slope per layer: cells per layer squared. | Positive increases base tilt over time; negative slows it and can reverse it. |
-| `amplitude` | Nonnegative finite `[min, max]`, subject to the shared budget. | Sine amplitude in scalar cells. | Larger produces wider waves; 0 disables oscillation. |
+| `slope` | Nonnegative `[min, max]`; compatibility fallback when shared `pn.slope` is null/omitted. | Base scalar movement units per layer along the retained direction. | Controls base tilt. With bend/amplitude zero, 0 is stationary and 0.5 gives a half-slope. |
+| `bend` | Signed finite `[min, max]`, subject to the shared budget. | Change in scalar slope per layer: movement units per layer squared. | Positive increases base tilt over time; negative slows it and can reverse it. |
+| `amplitude` | Nonnegative finite `[min, max]`, subject to the shared budget. | Sine amplitude in scalar movement units. | Larger produces wider waves; 0 disables oscillation. |
 | `wavelength` | Strictly positive finite `[min, max]`, subject to the shared budget. | Layers per sine cycle. | Larger produces longer waves; smaller produces tighter waves and greater speed for the same amplitude. |
 | `phase` | Any signed finite `[min, max]`; commonly `[0, 2 * Math.PI]`. | Radians; one full turn is `2 * Math.PI`. | Changes where each wave begins; differing phases stagger neighboring waves. |
 | `parameterNoise.spaceScale` | 0 through the finite magnitude limit. | Noise-coordinate units per initial grid cell. | Controls sizes of regions with similar curve parameters, independently of movement noise. |
@@ -112,7 +145,7 @@ amplitude.
 | `grid.cols`, `grid.rows` | Positive int32 plane dimensions, in cells. |
 | `grid.baseDepth` | Positive int32 base camera-framing depth in layers. Effective visual depth also includes the selected view's depth multiplier. |
 | `grid.factor` | Scales grid dimensions and effective PN and initial-pattern settings as described above. Derived values are validated. |
-| `grid.cellSize` | Positive finite cube size in pixels. It changes presentation, not cell-space motion or noise sampling. |
+| `grid.cellSize` | Positive finite cube side and z pitch in model units. With default movementUnit it also determines lateral movement spacing; the physical cap stays in cell-size units. |
 | `simulation.states` | Integer 2 through 9, including empty state 0. |
 | `simulation.numGenerations` | Positive int32 total layer count including layer 0. The current getter uses 1.75 times visual depth; replace it with a number for an independent count. |
 | `simulation.timeInterval` | Delay between rendered generations, 0 through 2147483647 milliseconds. It does not define `noiseTimeScale` or `wavelength`. |
@@ -346,11 +379,17 @@ percentages in a single generation.
 
 ### Legacy behavior
 
-The preferred displacement is the retained signed heading multiplied by
+Without shared slope, the preferred displacement is the retained signed heading multiplied by
 `maxCellsPerAxisPerLayer`. If the cap is 2, heading `[1,0]` continues by `[2,0]`.
 Alternative movements remain adjacent, regardless of the cap. Their resulting
 heading is retained, and subsequent continuation uses the configured speed.
 Staying stores `[0,0]`.
+
+With shared slope, legacy quantizes accumulated linear progress instead.
+Preferred fractional stays retain the heading so progress can accumulate;
+alternative turns/stays change the retained heading and rebase the path while
+preserving fractional remainders. This differs from trajectory alternatives,
+which do not redirect the underlying curve.
 
 ### Trajectory behavior
 
@@ -403,7 +442,7 @@ speedBound = S + B*(D-1) + 2*PI*A/W
 It requires:
 
 ```text
-speedBound <= pn.maxCellsPerAxisPerLayer
+speedBound <= pn.maxCellsPerAxisPerLayer * (cellSize / effectiveMovementUnit)
 ```
 
 This is a conservative continuous-speed bound over all configured range
@@ -515,9 +554,12 @@ clipped. Row memory continues to observe the original x=0 stripe. Coordinates
 outside JavaScript's safe integer range produce an error. Intermediate cells
 are not filled in either mode.
 
-Only arrivals at the same destination in the same layer collide. Two paths can
+With null/omitted movementUnit, only arrivals at the same destination in the same layer collide. Two paths can
 cross between layers or jump over a cell without a collision. Faster movement
 can leave gaps between rendered cubes and produce seam-to-seam visual jumps.
+With explicit movementUnit, the footprint collision and contained-wrap rules
+in [Sub-cell movement](#sub-cell-movement) apply instead. Intermediate positions
+along a jump still do not trigger swept-path collisions.
 
 ### Collision rules
 

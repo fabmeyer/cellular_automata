@@ -25,7 +25,7 @@ the configuration is resolved:
 | `pn.trajectory.amplitude`, `pn.trajectory.wavelength` | Each endpoint times `f` |
 | Memory's state-based history and match duration | Scaled by `f`; see [Memory](#memory) |
 | `ca.neighborhoodSize` and CA update cadence | Unchanged |
-| Slope, phase, probabilities, movement limit, cell size, alpha, camera, and delay | Unchanged |
+| Slope, movement unit, phase, probabilities, movement limit, cell size, alpha, camera, and delay | Unchanged |
 
 Do not manually multiply these settings when changing the factor. The
 simulation still updates at every layer, so a factor-4 run is a finer,
@@ -61,7 +61,7 @@ Browser memory, GPU limits, and rendering time can become limiting.
 | `grid.cols` | `96 * factor` | Positive integer number of cells along x. |
 | `grid.rows` | `96 * factor` | Positive integer number of cells along y. |
 | `grid.baseDepth` | `192 * factor` | Positive integer base depth in layers used for camera framing. The selected view multiplies it. |
-| `grid.cellSize` | `4` | Positive cube side length in pixels. It affects rendering dimensions, not cell-space rules. |
+| `grid.cellSize` | `4` | Positive cube side and generation spacing in model units. It affects scene/canvas dimensions and the physical PN movement cap; model units are not necessarily projected pixels. |
 
 The dimension entries are JavaScript getters in the supplied config; replace
 them with numeric values only if independent dimensions are desired. They are
@@ -160,7 +160,9 @@ does not expand to follow them.
 | --- | --- | --- |
 | `pn.mode` | `"trajectory"` | `"legacy"` continues a retained heading; `"trajectory"` uses parameterized paths. |
 | `pn.boundary` | `"grow"` | `"wrap"` wraps around plane edges; `"grow"` permits movement beyond them. |
-| `pn.maxCellsPerAxisPerLayer` | `100` | Positive integer movement limit per x or y axis and layer. In legacy mode it is also the continued-heading speed; in trajectory mode it is a speed ceiling. |
+| `pn.movementUnit` | `null` | Null/omitted keeps the original lattice. A positive value must divide `cellSize` into a safe integer number of ticks; e.g. `1` permits one-unit movement with 4/8-unit cubes. Enables sparse positions and footprint collisions/wrap. |
+| `pn.slope` | `null` | Shared nonnegative ordered `[min, max]` movement units per layer in both modes. Null/omitted preserves legacy's preferred speed or the trajectory slope below. Explicit shared slope overrides `pn.trajectory.slope`. |
+| `pn.maxCellsPerAxisPerLayer` | `100` | Positive integer cap per axis/layer in **cell-size units**, independent of movement resolution. Legacy also uses it as preferred speed in movement units when shared slope is null. |
 | `pn.forwardProbability` | `1.0` | Probability from 0 to 1 of following the preferred movement. The remaining probability is split equally across eight alternative adjacent directions. |
 | `pn.noiseSpaceScale` | `0.01` | Nonnegative factor-1 increment per cell in the movement noise's x/y inputs. Zero removes spatial dependence; drift can still change those inputs. |
 | `pn.noiseTimeScale` | `0.5` | Nonnegative factor-1 increment per layer in the movement noise's z input. Zero fixes that input at zero. |
@@ -168,9 +170,52 @@ does not expand to follow them.
 | `pn.noiseSteering` | `false` | Resample preferred headings each layer in both modes; trajectory also resamples its curve parameters. At probability 1, cells follow the field rather than retaining their initial headings. |
 
 The movement limit applies separately to x and y, not to Euclidean distance.
-Only destinations are occupied: a multi-cell jump can leave gaps.
-Alternatives move at most one cell per axis, even if the preferred movement
-uses a larger limit.
+Only destinations are occupied: larger jumps can leave gaps. Alternatives
+move at most one movement unit per axis, regardless of preferred speed.
+
+### One-unit movement with unchanged cube size
+
+Keep `grid.cellSize: 4` or `8` and set:
+
+```js
+movementUnit: 1,
+slope: [1, 1],
+maxCellsPerAxisPerLayer: 1
+```
+
+With a lateral heading and probability 1, the preferred displacement is one
+model unit per layer. The cube side, initial pattern/spacing, z pitch, camera,
+and image dimensions stay unchanged. Slope `[4, 4]` with cell size 4 (or
+`[8, 8]` with size 8) restores the previous base speed while still fitting a
+one-cell cap. Fractional slopes retain progress: `[0.25, 0.25]` advances one
+movement tick every four layers on a fixed straight path.
+
+Both modes sample an explicit shared slope range. Legacy samples it using the
+movement noise field at initialization and resamples it when steering is on;
+trajectory retains its parameter-noise channel and steering behavior.
+Trajectory bend and amplitude are also measured in movement units and consume
+the same physical cap. Reducing movementUnit therefore changes their physical
+scale unless their values are adjusted.
+
+Supplying movementUnit enables sparse integer-tick anchors: initialization
+still produces one cube per original occupied cell, not a denser field of
+enlarged cubes. After initialization, PN layers are maps of `{x,y,state}`
+anchors; x/y are ticks and StateGrid get/set use those tick coordinates.
+Default PN and CA still use dense byte layers. History retention/release works
+for both representations.
+
+**Collision/wrap changes are opt-in:** intersecting same-layer footprints
+merge, including transitive intersections; touching faces do not. The highest
+state's destination center survives (ties use x then y coordinate order).
+Headings/progress merge as before. Wrap brings crossing footprints to the
+opposite boundary and clamps overhang so whole cubes fit inside the plane.
+Grow permits exterior footprints and re-entry without expanding the camera.
+These changes mean matching the old slope does not reproduce old geometry.
+
+Empty cubes remain on the original coarse backdrop, with sites containing
+occupied centers omitted. Occupied cubes are drawn at their actual positions;
+the backdrop mask is not simulation occupancy. Sparse WebGL2 rendering remains
+instanced, with a matching per-cube fallback.
 
 ### Inputs to Perlin noise
 
@@ -228,9 +273,9 @@ the ranges or reach their endpoints.
 
 | Parameter | Default | Meaning and constraints |
 | --- | --- | --- |
-| `pn.trajectory.slope` | `[0, 0]` | Nonnegative base displacement in cells per layer along the initial direction. |
-| `pn.trajectory.bend` | `[-0.001, 0.001]` | Signed factor-1 change in slope per layer. Negative values can slow and reverse a path. |
-| `pn.trajectory.amplitude` | `[16, 256]` | Nonnegative factor-1 sine displacement amplitude in cells. |
+| `pn.trajectory.slope` | `[0, 0]` | Compatibility fallback when `pn.slope` is null/omitted; otherwise shared slope is authoritative. Movement units per layer. |
+| `pn.trajectory.bend` | `[-0.001, 0.001]` | Signed factor-1 change in slope per layer, in movement units. Negative values can slow and reverse a path. |
+| `pn.trajectory.amplitude` | `[16, 256]` | Nonnegative factor-1 sine displacement amplitude in movement units. |
 | `pn.trajectory.wavelength` | `[32, 1024]` | Strictly positive factor-1 sine cycle length in layers; must allow finite curve evaluation. |
 | `pn.trajectory.phase` | `[0, 2 * Math.PI]` | Sine phase range in radians. |
 | `pn.trajectory.parameterNoise.spaceScale` | `0.01` | Nonnegative factor-1 spatial increment for the initial trajectory parameter field. Zero gives every cell the same sample per channel. |
@@ -256,8 +301,8 @@ F(t) = slope*t + bend*t*t/2
      + amplitude * (sin(2*PI*t/wavelength + phase) - sin(phase))
 ```
 
-Here `t` is the layer index and `F(0) = 0`. Displacement is quantized to cell
-positions; the initial direction can be stationary. Alternatives can locally
+Here `t` is the layer index and `F(0) = 0`. Displacement is quantized to movement
+ticks; the initial direction can be stationary. Alternatives can locally
 deviate from the planned trajectory.
 
 The resolver checks a conservative speed bound using **effective** trajectory
@@ -266,7 +311,7 @@ values and the total generation count:
 ```text
 maxSlope + maxAbsBend * (numGenerations - 1)
          + 2 * PI * maxAmplitude / minWavelength
-    <= pn.maxCellsPerAxisPerLayer
+    <= pn.maxCellsPerAxisPerLayer * (cellSize / effectiveMovementUnit)
 ```
 
 The startup console reports this bound and the configured limit. Invalid
@@ -301,6 +346,11 @@ rounding.
 
 Memory watches the `x = 0` stripe of each layer, not the entire plane. A
 matching stripe does not prove that the entire plane repeats.
+
+In position mode this is the original first-column-width physical stripe.
+Snapshots include exact tick positions and states of centers inside that
+stripe and the plane's y extent, so sub-cell movement is not mistaken for
+repetition. The coarse backdrop is never used for memory comparisons.
 
 | Parameter | Default | Meaning and constraints |
 | --- | --- | --- |

@@ -135,11 +135,14 @@ function logSimulationSettings(settings, coloring, seedSource) {
             algorithmSettings.emptyStateProbability = emptyStateProbability;
         }
     } else {
-        const { mode, boundary, maxCellsPerAxisPerLayer, forwardProbability,
+        const { mode, boundary, movementUnit, slope, maxCellsPerAxisPerLayer, forwardProbability,
             noiseSpaceScale, noiseTimeScale, noiseDrift, noiseSteering, trajectory } = settings.pn;
         algorithmSettings = {
             mode, boundary, maxCellsPerAxisPerLayer, forwardProbability, noiseSpaceScale, noiseTimeScale,
-            noiseDrift, noiseSteering
+            noiseDrift, noiseSteering, movementUnit: movementUnit ?? grid.cellSize,
+            slope: mode === "trajectory" ? trajectory.slope : slope ?? [maxCellsPerAxisPerLayer, maxCellsPerAxisPerLayer],
+            positionMode: movementUnit !== null,
+            maxModelUnitsPerAxisPerLayer: maxCellsPerAxisPerLayer * grid.cellSize
         };
         if (mode === "trajectory") {
             const { slope, bend, amplitude, wavelength, phase, parameterNoise } = trajectory;

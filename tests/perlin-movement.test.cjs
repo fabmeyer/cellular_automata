@@ -1109,6 +1109,278 @@ test('temporal scale steers probability-one paths independently of drift', () =>
     }
 });
 
+function positionSimulation(mode, options = {}) {
+    const size = options.size ?? 4;
+    const harness = createHarness({
+        grid: { cellSize: size, cols: options.cols ?? 4, rows: 4, baseDepth: 8 },
+        simulation: { states: 3, retainHistory: options.retainHistory ?? true },
+        initial: { mode: 'random' },
+        memory: { enabled: options.memory ?? false },
+        pn: {
+            mode, movementUnit: 1, slope: [1, 1], boundary: options.boundary ?? 'wrap',
+            noiseSteering: false, noiseDrift: [0, 0], noiseSpaceScale: 0, noiseTimeScale: 0,
+            forwardProbability: 1, maxCellsPerAxisPerLayer: options.limit ?? 1,
+            ...options.pn,
+            trajectory: {
+                slope: [99, 99], bend: [0, 0], amplitude: [0, 0], wavelength: [16, 16], phase: [0, 0],
+                parameterNoise: { spaceScale: 0, channels: 'shared' }, ...options.trajectory
+            }
+        }
+    }, { noise: options.noise ?? (() => 5.5 / 9) });
+    const { subject, classes } = harness;
+    subject.initialize();
+    subject.grid.layer(0).clear();
+    for (const [x, y, state] of options.cells ?? [[size, size, 1]]) {
+        subject.grid.set(x, y, 0, state);
+    }
+    subject.algorithm.initialize(subject.grid);
+    for (const [x, y, , dx = 1, dy = 0] of options.cells ?? [[size, size, 1]]) {
+        const key = `${x},${y}`;
+        subject.algorithm.history.set(key, [dx, dy]);
+        const trajectory = subject.algorithm.trajectories.get(key);
+        if (trajectory) trajectory.direction = [dx, dy];
+    }
+    if (options.memory) {
+        subject.memory = new classes.RowMemory(subject.settings);
+        subject.memory.addLayer(subject.grid, 0);
+    }
+    return harness;
+}
+
+test('PN position units preserve initialization and draw one-unit steps with 4/8-unit cubes', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const size of [4, 8]) {
+            const { subject, classes } = positionSimulation(mode, { size });
+            const { drawing, calls } = drawingStub();
+            const renderer = new classes.GridRenderer(subject.settings, drawing, () => 0);
+            renderer.setup();
+            renderer.drawLayer(subject.grid, 0);
+            const initial = calls.filter(([name]) => name === 'translate').at(-1);
+            const camera = calls.filter(([name]) => name === 'camera' || name === 'ortho');
+            calls.length = 0;
+            subject.step();
+            assert.deepEqual(plain([...subject.grid.layer(1).values()]), [{ x: size + 1, y: size, state: 1 }]);
+            renderer.drawLayer(subject.grid, 1);
+            const moved = calls.filter(([name]) => name === 'translate').at(-1);
+            assert.deepEqual(moved.slice(1), [initial[1] + 1, initial[2], initial[3] + size]);
+            assert.ok(calls.filter(([name]) => name === 'box').every(call =>
+                call.slice(1).every(value => value === size)));
+            assert.equal(calls.filter(([name]) => name === 'box').length, 16);
+            assert.equal(drawing.width, 4 * size * subject.settings.preset.canvasScale[0]);
+            assert.equal(calls.some(([name]) => name === 'camera' || name === 'ortho'), false);
+            assert.equal(camera.length, 2);
+            assert.equal(subject.grid.layers[2], null);
+        }
+    }
+    const run = unit => {
+        const { subject } = createHarness({
+            grid: { cellSize: 8 }, initial: { mode: 'random' }, memory: { enabled: false },
+            pn: { movementUnit: unit, noiseSteering: false }
+        }, { random: seededRandom(31), noise: () => 5.5 / 9 });
+        subject.initialize();
+        return subject;
+    };
+    const coarse = run(null);
+    const fine = run(1);
+    const expected = [];
+    for (let x = 0; x < 8; x++) for (let y = 0; y < 8; y++) {
+        const state = coarse.grid.get(x, y, 0);
+        if (state !== 0) expected.push({ x: x * 8, y: y * 8, state });
+    }
+    assert.deepEqual(plain([...fine.grid.layer(0).values()]), expected);
+});
+
+test('PN shared slope controls both modes, fractional cadence, and cell-size speed caps', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const size of [4, 8]) {
+            const fast = positionSimulation(mode, { size, pn: { slope: [size, size] } }).subject;
+            fast.step();
+            assert.equal([...fast.grid.layer(1).values()][0].x, size * 2);
+            const slow = positionSimulation(mode, { size, pn: { slope: [0.25, 0.25] } }).subject;
+            for (let z = 1; z <= 4; z++) {
+                slow.step();
+                assert.equal([...slow.grid.layer(z).values()][0].x, size + Math.trunc(z / 4));
+            }
+            assert.throws(() => positionSimulation(mode, { size, pn: { slope: [size + 1, size + 1] } }),
+                /slope|speed bound/);
+        }
+        const stationary = positionSimulation(mode, { pn: { slope: [0, 0] } }).subject;
+        stationary.step();
+        assert.equal([...stationary.grid.layer(1).values()][0].x, 4);
+        const alternative = positionSimulation(mode, {
+            pn: { slope: [4, 4], forwardProbability: 0 },
+            noise: () => 0
+        }).subject;
+        alternative.step();
+        assert.deepEqual(plain([...alternative.grid.layer(1).values()]), [{ x: 3, y: 3, state: 1 }]);
+    }
+    const { subject } = createHarness({
+        pn: { slope: [0.5, 0.5], noiseSteering: false, forwardProbability: 1 },
+        initial: { mode: 'random' }, memory: { enabled: false }
+    }, { noise: () => 5.5 / 9 });
+    subject.initialize();
+    subject.grid.layer(0).fill(0);
+    subject.grid.set(2, 2, 0, 1);
+    subject.algorithm.initialize(subject.grid);
+    subject.step();
+    assert.equal(subject.grid.get(2, 2, 1), 1);
+    subject.step();
+    assert.equal(subject.grid.get(3, 2, 2), 1);
+});
+
+test('PN shared slope preserves legacy turns after alternatives while trajectory keeps its curve', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        const { subject } = positionSimulation(mode, {
+            boundary: 'grow', pn: { slope: [4, 4], forwardProbability: 0.5 }
+        });
+        subject.step();
+        assert.deepEqual(plain([...subject.grid.layer(1).values()]), [{ x: 4, y: 3, state: 1 }]);
+        subject.algorithm.random = () => 0.4;
+        subject.step();
+        assert.deepEqual(plain([...subject.grid.layer(2).values()]),
+            [{ x: mode === 'legacy' ? 4 : 8, y: mode === 'legacy' ? -1 : 3, state: 1 }]);
+    }
+});
+
+test('PN position collisions merge transitive overlaps at a deterministic highest-state center, not touching cubes', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const cells of [
+            [[0, 4, 1, 0, 0], [3, 4, 2, 0, 0], [6, 4, 2, 0, 0]],
+            [[6, 4, 2, 0, 0], [3, 4, 2, 0, 0], [0, 4, 1, 0, 0]]
+        ]) {
+            const { subject } = positionSimulation(mode, { cells });
+            for (const path of subject.algorithm.trajectories.values()) {
+                path.offset = [0.5, 0];
+                path.origin.offset = [0.5, 0];
+            }
+            subject.step();
+            assert.deepEqual(plain([...subject.grid.layer(1).values()]), [{ x: 3, y: 4, state: 2 }]);
+            assert.deepEqual(plain(subject.algorithm.history.get('3,4')), [0, 0]);
+            assert.deepEqual(plain(subject.algorithm.trajectories.get('3,4').offset), [0.5, 0]);
+        }
+        const touching = positionSimulation(mode, {
+            cells: [[0, 4, 1, 0, 0], [4, 4, 2, 0, 0]]
+        }).subject;
+        touching.step();
+        assert.equal(touching.grid.layer(1).size, 2);
+    }
+});
+
+test('PN shared slope legacy collisions retain displacement-weighted headings', () => {
+    const { subject } = positionSimulation('legacy', {
+        boundary: 'grow', pn: { slope: [4, 4] },
+        cells: [[0, 4, 1, 1, 0], [8, 4, 2, -1, 0]]
+    });
+    subject.algorithm.trajectories.get('8,4').parameters.slope = 1;
+    subject.step();
+    assert.deepEqual(plain([...subject.grid.layer(1).values()]), [{ x: 7, y: 4, state: 2 }]);
+    assert.deepEqual(plain(subject.algorithm.trajectories.get('7,4').direction), [1, 0]);
+    subject.step();
+    assert.equal(subject.grid.get(9, 4, 2), 2);
+});
+
+test('PN position wrap contains complete footprints and grow supports negative positions and re-entry', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const [x, y, dx, dy, expectedX, expectedY] of [
+            [12, 4, 1, 0, 0, 4], [0, 4, -1, 0, 12, 4], [0, 0, -1, -1, 12, 12],
+            [4, 12, 0, 1, 4, 0]
+        ]) {
+            const { subject } = positionSimulation(mode, { cells: [[x, y, 2, dx, dy]] });
+            subject.step();
+            assert.deepEqual(plain([...subject.grid.layer(1).values()]), [{ x: expectedX, y: expectedY, state: 2 }]);
+        }
+        const large = positionSimulation(mode, { limit: 10, pn: { slope: [31, 31] },
+            cells: [[12, 12, 1, -1, -1]] }).subject;
+        large.step();
+        for (const cell of large.grid.layer(1).values()) {
+            assert.ok(cell.x >= 0 && cell.x <= 12 && cell.y >= 0 && cell.y <= 12);
+        }
+        const narrow = positionSimulation(mode, { cols: 1, cells: [[0, 4, 1]] }).subject;
+        narrow.step();
+        assert.equal([...narrow.grid.layer(1).values()][0].x, 0);
+    }
+    const grow = positionSimulation('legacy', {
+        boundary: 'grow', pn: { slope: null }, cells: [[0, 4, 1, -1, 0]]
+    }).subject;
+    grow.step();
+    assert.equal(grow.grid.get(-1, 4, 1), 1);
+    grow.algorithm.history.set('-1,4', [1, 0]);
+    grow.step();
+    assert.equal(grow.grid.get(0, 4, 2), 1);
+});
+
+test('PN position memory distinguishes sub-cell positions and releases sparse history', () => {
+    for (const retainHistory of [false, true]) {
+        const { subject } = positionSimulation('legacy', {
+            retainHistory, memory: true, cells: [[0, 4, 1]], pn: { slope: null }
+        });
+        const first = plain(subject.memory.getLatestRow());
+        subject.step();
+        assert.notDeepEqual(plain(subject.memory.getLatestRow()), first);
+        assert.equal(subject.memory.latestPeriod, null);
+        assert.equal(subject.grid.layers[0] === null, !retainHistory);
+        subject.algorithm.history.set('1,4', [0, 0]);
+        subject.memory.matchRunLength = 1;
+        subject.step();
+        assert.equal(subject.memory.latestPeriod, 1);
+        assert.equal(subject.grid.layers.filter(layer => layer !== null).length, retainHistory ? 3 : 1);
+    }
+});
+
+test('PN position units validate ratios and shared slope while omitted parameters replay unchanged', () => {
+    const { classes, config } = createHarness();
+    for (const unit of [0, -1, NaN, Infinity, 1.5, 5, '1']) {
+        config.pn.movementUnit = unit;
+        assert.throws(() => classes.resolveConfig(config), /pn.movementUnit/);
+    }
+    config.pn.movementUnit = 1;
+    for (const slope of [[-1, 0], [2, 1], [0, Infinity], [1], '1']) {
+        config.pn.slope = slope;
+        assert.throws(() => classes.resolveConfig(config), /pn.slope/);
+    }
+    for (const mode of ['legacy', 'trajectory']) {
+        const run = omitted => {
+            const { config, classes } = createHarness({
+                pn: { mode, noiseSteering: false }, memory: { enabled: false }, initial: { mode: 'random' }
+            });
+            if (omitted) {
+                delete config.pn.movementUnit;
+                delete config.pn.slope;
+            }
+            const samples = [];
+            const subject = new classes.Simulation(config, seededRandom(19), (...xyz) => {
+                samples.push(xyz);
+                return 5.5 / 9;
+            });
+            subject.initialize();
+            while (subject.step() !== null) {}
+            return { layers: Array.from(subject.grid.layers, layer => Array.from(layer)), samples };
+        };
+        assert.deepEqual(run(true), run(false));
+    }
+});
+
+test('PN shared slope ranges follow steering without losing fractional progress', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        const { subject } = positionSimulation(mode, {
+            pn: { slope: [0.5, 1.5], noiseSteering: true },
+            noise: () => 5.5 / 9
+        });
+        for (let z = 1; z <= 3; z++) {
+            subject.step();
+            assert.equal([...subject.grid.layer(z).values()][0].x, 4 + Math.trunc((0.5 + 5.5 / 9) * z));
+        }
+        const reverse = positionSimulation(mode, {
+            boundary: 'grow', limit: 3, pn: { slope: [2, 2] },
+            trajectory: mode === 'trajectory' ? { bend: [-1, -1] } : {}
+        }).subject;
+        if (mode === 'trajectory') {
+            for (let z = 1; z <= 5; z++) reverse.step();
+            assert.equal([...reverse.grid.layer(5).values()][0].x, 2);
+        }
+    }
+});
+
 test('omitted drift and steering preserve seeded geometry, sampling, and random draws', () => {
     for (const mode of ['legacy', 'trajectory']) {
         for (const boundary of ['wrap', 'grow']) {

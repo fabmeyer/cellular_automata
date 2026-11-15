@@ -29,6 +29,26 @@ function prepareSmallSimulation(numGenerations) {
     return { context, timers, logs, seeds };
 }
 
+test('PN position startup logs movement units, shared slope, and the cell-size cap', () => {
+    for (const mode of ['legacy', 'trajectory']) {
+        const { context, logs } = prepareSmallSimulation(1);
+        vm.runInContext(`
+            CONFIG.grid.cellSize = 4;
+            Object.assign(CONFIG.pn, { mode: '${mode}', movementUnit: 1, slope: [4, 4],
+                trajectory: { slope: [99, 99], bend: [0, 0], amplitude: [0, 0],
+                    wavelength: [16, 16], phase: [0, 0],
+                    parameterNoise: { spaceScale: 0, channels: 'shared' } } });
+            setup();
+        `, context);
+        const record = JSON.parse(logs.find(([label]) => label === 'Simulation settings:')[1]);
+        assert.equal(record.algorithm.movementUnit, 1);
+        assert.deepEqual(record.algorithm.slope, [4, 4]);
+        assert.equal(record.algorithm.positionMode, true);
+        assert.equal(record.algorithm.maxModelUnitsPerAxisPerLayer, 4);
+        assert.equal(record.grid.cellSize, 4);
+    }
+});
+
 test('startup logs configured and generated seeds without mutating configuration', () => {
     for (const [seed, source, expected] of [[0, 'configured', 0], [null, 'generated', 1073741824]]) {
         const { context, logs, seeds } = prepareSmallSimulation(1);

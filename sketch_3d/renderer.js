@@ -108,7 +108,15 @@ class GridRenderer {
             return null;
         }
         const { cols, rows, cellSize } = this.settings.grid;
-        const states = p.createImage(rows, cols);
+        const sparse = this.settings.simulation.algorithm === "PN" && this.settings.pn.movementUnit !== null;
+        const capacity = cols * rows * 2;
+        const textureLimit = this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE);
+        const dataWidth = sparse ? Math.min(textureLimit, Math.ceil(Math.sqrt(capacity * 5))) : rows;
+        const dataHeight = sparse ? Math.ceil(capacity * 5 / dataWidth) : cols;
+        if (dataWidth > textureLimit || dataHeight > textureLimit) {
+            throw this.allocationError(`PN position texture ${dataWidth}x${dataHeight} exceeds texture limit ${textureLimit}`);
+        }
+        const states = p.createImage(dataWidth, dataHeight);
         states.loadPixels();
         for (let i = 3; i < states.pixels.length; i += 4) {
             states.pixels[i] = 255;
@@ -133,12 +141,28 @@ class GridRenderer {
             uniform float layerZ;
             uniform vec4 palette[9];
             flat out vec4 cellColor;
+            ${sparse ? `
+            uniform int dataWidth;
+            vec4 dataTexel(int index) {
+                return texelFetch(states, ivec2(index % dataWidth, index / dataWidth), 0);
+            }
+            float positionValue(int index) {
+                uvec3 low = uvec3(round(dataTexel(index).rgb * 255.0));
+                uint high = uint(round(dataTexel(index + 1).r * 255.0));
+                return uintBitsToFloat(low.r | (low.g << 8) | (low.b << 16) | (high << 24));
+            }` : ""}
             void main() {
+                ${sparse ? `
+                int base = gl_InstanceID * 5;
+                int state = int(round(dataTexel(base + 4).r * 255.0));
+                vec3 offset = vec3(positionValue(base), positionValue(base + 2), layerZ);
+                ` : `
                 int x = gl_InstanceID / rows;
                 int y = gl_InstanceID - x * rows;
                 int state = int(round(texelFetch(states, ivec2(y, x), 0).r * 255.0));
-                cellColor = palette[state];
                 vec3 offset = vec3((vec2(x, y) - gridSize / 2.0 + 0.5) * cellSize, layerZ);
+                `}
+                cellColor = palette[state];
                 gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition + offset, 1.0);
             }`, `#version 300 es
             precision highp float;
@@ -146,7 +170,64 @@ class GridRenderer {
             out vec4 outColor;
             void main() { outColor = vec4(cellColor.rgb * cellColor.a, cellColor.a); }`);
         const cube = p.buildGeometry(() => p.box(cellSize, cellSize, cellSize));
-        return { states, palette, shader, cube };
+        return { states, palette, shader, cube, sparse, dataWidth, capacity };
+    }
+
+    *positionCells(grid, zIndex) {
+        const { cols, rows, cellSize } = this.settings.grid;
+        const scale = grid.positionScale;
+        const occupied = grid.layer(zIndex);
+        const mask = new Uint8Array(cols * rows);
+        for (const cell of occupied.values()) {
+            const x = Math.floor(cell.x / scale + 0.5);
+            const y = Math.floor(cell.y / scale + 0.5);
+            if (x >= 0 && x < cols && y >= 0 && y < rows) {
+                mask[x * rows + y] = 1;
+            }
+        }
+        for (let x = 0; x < cols; x++) {
+            for (let y = 0; y < rows; y++) {
+                if (mask[x * rows + y] === 0) {
+                    yield { x: (x + 0.5 - cols / 2) * cellSize,
+                        y: (y + 0.5 - rows / 2) * cellSize, state: 0 };
+                }
+            }
+        }
+        const unit = this.settings.pn.movementUnit;
+        for (const cell of occupied.values()) {
+            const x = cell.x * unit + (0.5 - cols / 2) * cellSize;
+            const y = cell.y * unit + (0.5 - rows / 2) * cellSize;
+            if (!Number.isFinite(Math.fround(x)) || !Number.isFinite(Math.fround(y))) {
+                throw new Error(`PN rendered position exceeds float32 range at layer ${zIndex}`);
+            }
+            yield { x, y, state: cell.state };
+        }
+    }
+
+    uploadPositions(grid, zIndex) {
+        const { states, capacity } = this.instancing;
+        const bytes = new Uint8Array(4);
+        const view = new DataView(bytes.buffer);
+        let count = 0;
+        // Keep texture alpha opaque: canvas premultiplication would corrupt packed position bytes.
+        for (const cell of this.positionCells(grid, zIndex)) {
+            if (count >= capacity) {
+                throw new Error(`PN position count exceeds renderer capacity at layer ${zIndex}`);
+            }
+            const base = count * 20;
+            for (const [axis, value] of [cell.x, cell.y].entries()) {
+                view.setFloat32(0, value, true);
+                const offset = base + axis * 8;
+                states.pixels[offset] = bytes[0];
+                states.pixels[offset + 1] = bytes[1];
+                states.pixels[offset + 2] = bytes[2];
+                states.pixels[offset + 4] = bytes[3];
+            }
+            states.pixels[base + 16] = cell.state;
+            count++;
+        }
+        states.updatePixels();
+        return count;
     }
 
     // Mirrors drawLayer: rotateX, rotateY, rotateZ applied to the model, so vertices see Rx(Ry(Rz(v))).
@@ -182,6 +263,39 @@ class GridRenderer {
         p.rotateY(Math.PI * ry);
         p.rotateZ(Math.PI * rz);
         const layer = grid.layer(zIndex);
+        if (grid.positionsInitialized) {
+            const layerZ = (zIndex + 0.5) * cellSize - this.settings.depth * cellSize / 2;
+            if (this.instancing) {
+                const count = this.uploadPositions(grid, zIndex);
+                const { states, palette, shader, cube, dataWidth } = this.instancing;
+                this.assertContext();
+                try {
+                    p.shader(shader);
+                    shader.setUniform("states", states);
+                    shader.setUniform("dataWidth", dataWidth);
+                    shader.setUniform("layerZ", layerZ);
+                    shader.setUniform("palette", palette);
+                    if (count > 0) {
+                        p.model(cube, count);
+                    }
+                    p.resetShader();
+                } catch (error) {
+                    this.assertContext();
+                    throw error;
+                }
+            } else {
+                for (const cell of this.positionCells(grid, zIndex)) {
+                    p.push();
+                    p.fill(this.colors[cell.state]);
+                    p.translate(cell.x, cell.y, layerZ);
+                    p.box(cellSize, cellSize, cellSize);
+                    p.pop();
+                }
+            }
+            p.pop();
+            this.assertContext();
+            return;
+        }
         if (this.instancing) {
             const { states, palette, shader, cube } = this.instancing;
             for (let i = 0; i < layer.length; i++) {

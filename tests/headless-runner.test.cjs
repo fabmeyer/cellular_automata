@@ -6,6 +6,99 @@ const { createCanvas, loadImage } = require('canvas');
 const { createLocalServer, fitViewportToCanvas, forwardConsoleMessage, waitForSimulation } =
     require('../scripts/run-headless.cjs');
 
+test('PN position instancing renders one-unit shifts with unchanged 4/8-unit footprints', async t => {
+    const server = createLocalServer();
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const browser = await puppeteer.launch({ headless: true });
+    t.after(() => browser.close());
+    const run = async (mode, size) => {
+        const page = await browser.newPage();
+        try {
+            await page.evaluateOnNewDocument(({ mode, size }) => {
+                window.addEventListener('DOMContentLoaded', () => {
+                    CONFIG.grid = { factor: 1, cols: 4, rows: 4, baseDepth: 1, cellSize: size };
+                    CONFIG.simulation = { ...CONFIG.simulation, algorithm: 'PN', seed: 123,
+                        states: 2, numGenerations: 1, retainHistory: true };
+                    CONFIG.pn = { ...CONFIG.pn, mode, movementUnit: 1, slope: [1, 1],
+                        noiseSteering: false, forwardProbability: 1, maxCellsPerAxisPerLayer: 1,
+                        trajectory: { slope: [99, 99], bend: [0, 0], amplitude: [0, 0],
+                            wavelength: [16, 16], phase: [0, 0],
+                            parameterNoise: { spaceScale: 0, channels: 'shared' } } };
+                    CONFIG.initial = { ...CONFIG.initial, mode: 'random', resolutionFactor: 1 };
+                    CONFIG.memory.enabled = false;
+                    CONFIG.coloring = { state0Alpha: 0, otherStatesAlpha: 1 };
+                    CONFIG.view.orientation = 'sideways';
+                    CONFIG.view.cameraPadding = 1;
+                    CONFIG.view.antialias = false;
+                    CONFIG.view.presets.sideways = { depthMultiplier: 1, canvasScale: [4, 4], rotation: [0, 0, 0] };
+                });
+            }, { mode, size });
+            await page.goto(origin);
+            await page.waitForFunction(() => window.simulationDone || window.simulationError);
+            return await page.evaluate(size => {
+                if (window.simulationError) throw new Error(window.simulationError);
+                simulation = new Simulation({ ...CONFIG,
+                    simulation: { ...CONFIG.simulation, numGenerations: 3 } });
+                simulation.initialize();
+                simulation.grid.layer(0).clear();
+                simulation.grid.set(size, size, 0, 1);
+                simulation.algorithm.initialize(simulation.grid);
+                simulation.algorithm.history.set(`${size},${size}`, [1, 0]);
+                simulation.algorithm.trajectories.get(`${size},${size}`).direction = [1, 0];
+                renderer.colors = ['rgba(0, 0, 0, 0)', 'rgb(255, 0, 0)'];
+                renderer.instancing = renderer.createInstancing();
+                const gl = renderer.gl;
+                const bounds = z => {
+                    background(10);
+                    renderer.drawLayer(simulation.grid, z);
+                    const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+                    gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight,
+                        gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+                    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+                    for (let y = 0; y < gl.drawingBufferHeight; y++) {
+                        for (let x = 0; x < gl.drawingBufferWidth; x++) {
+                            const i = (y * gl.drawingBufferWidth + x) * 4;
+                            if (pixels[i] > 200 && pixels[i + 1] < 50 && pixels[i + 2] < 50) {
+                                minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+                                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+                            }
+                        }
+                    }
+                    return { minX, maxX, minY, maxY };
+                };
+                const initial = bounds(0);
+                simulation.step();
+                const moved = bounds(1);
+                return {
+                    initial, moved, sparse: renderer.instancing.sparse,
+                    width: gl.drawingBufferWidth, height: gl.drawingBufferHeight,
+                    state: [...simulation.grid.layer(1).values()],
+                    error: gl.getError(), image: gl.canvas.toDataURL()
+                };
+            }, size);
+        } finally {
+            await page.close();
+        }
+    };
+    for (const mode of ['legacy', 'trajectory']) {
+        for (const size of [4, 8]) {
+            const result = await run(mode, size);
+            assert.equal(result.sparse, true);
+            assert.equal(result.error, 0);
+            assert.equal(result.width, 16 * size);
+            assert.equal(result.height, 16 * size);
+            assert.equal(result.initial.maxX - result.initial.minX + 1, 4 * size);
+            assert.deepEqual(result.moved, { ...result.initial,
+                minX: result.initial.minX + 4, maxX: result.initial.maxX + 4 });
+            assert.deepEqual(result.state, [{ x: size + 1, y: size, state: 1 }]);
+            assert.deepEqual(await run(mode, size), result);
+        }
+    }
+});
+
 test('the optional favicon does not produce a 404, but missing assets still do', async t => {
     const server = createLocalServer();
     t.after(() => new Promise((resolve, reject) =>

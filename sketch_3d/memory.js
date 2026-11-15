@@ -15,6 +15,15 @@ class RowMemory {
     }
 
     extractRowStates(grid, zIndex) {
+        if (grid.positionsInitialized) {
+            const scale = grid.positionScale;
+            return [...grid.layer(zIndex).values()]
+                .filter(cell => Math.floor(cell.x / scale + 0.5) === 0 &&
+                    Math.floor(cell.y / scale + 0.5) >= 0 &&
+                    Math.floor(cell.y / scale + 0.5) < this.rowLength)
+                .sort((a, b) => a.x - b.x || a.y - b.y)
+                .flatMap(cell => [cell.x, cell.y, cell.state]);
+        }
         // Column x = 0 is the first rowLength bytes of the layer.
         return grid.layer(zIndex).slice(0, this.rowLength);
     }
@@ -37,7 +46,8 @@ class RowMemory {
 
         for (let i = 0; i < this.items.length; i++) {
             const period = zIndex - this.zIndices[i];
-            if (this.hashes[i] === hash && row.every((state, y) => state === this.items[i][y])) {
+            if (this.hashes[i] === hash && row.length === this.items[i].length &&
+                row.every((state, y) => state === this.items[i][y])) {
                 const runLength = (this.periodRuns.get(period) ?? 0) + 1;
                 nextRuns.set(period, runLength);
                 const requiredRunLength = this.quarterDepth > 0 && period <= this.quarterDepth

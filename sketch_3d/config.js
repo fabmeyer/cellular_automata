@@ -5,16 +5,16 @@ const CONFIG = {
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
-        cellSize: 4 // in pixels
+        cellSize: 4 // cube side and layer spacing in model units
     },
     simulation: {
         algorithm: "PN", // "CA", "PN"
         get states() { return Math.min(9, CONFIG.initial.patternSize); },
         get numGenerations() {
-            return 1.0 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
+            return 2.0 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
         }, // includes the initial layer
         retainHistory: false, // true keeps all simulated layers in memory
-        seed: null, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
+        seed: 1268502912, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
         timeInterval: 1
     },
     coloring: {
@@ -28,19 +28,21 @@ const CONFIG = {
         cycleUniform: true
     },
     pn: {
-        mode: "legacy", // "legacy", "trajectory"
-        boundary: "wrap", // "wrap", "grow"
-        maxCellsPerAxisPerLayer: 1.0, // integer
-        forwardProbability: 0.5,
-        noiseSpaceScale: 0.0005,
-        noiseTimeScale: 0.5,
-        noiseDrift: [1.0, 1.0], // noise-coordinate units per layer along x/y
-        noiseSteering: true,
+        mode: "trajectory", // "legacy", "trajectory"
+        boundary: "grow", // "wrap", "grow"
+        movementUnit: 1, // null uses cellSize; otherwise a positive divisor of cellSize, e.g. 1
+        slope: null, // shared [min, max] movement units per layer; null keeps each mode's existing speed
+        maxCellsPerAxisPerLayer: 1000, // integer
+        forwardProbability: 1.0,
+        noiseSpaceScale: 0.02,
+        noiseTimeScale: 0.1,
+        noiseDrift: [0.0, 0.0], // noise-coordinate units per layer along x/y
+        noiseSteering: false,
         trajectory: {
-            slope: [0.0, 0.0], // cells per layer
-            bend: [-0.002, 0.002], // change in slope per layer
-            amplitude: [4, 64],
-            wavelength: [16, 1024],
+            slope: [0.0, 0.0], // fallback when pn.slope is null; movement units per layer
+            bend: [-0.01, 0.01], // change in slope per layer
+            amplitude: [32, 256],
+            wavelength: [32, 1024],
             phase: [0, 2 * Math.PI], // radians
             parameterNoise: {
                 spaceScale: 0.02,
@@ -50,7 +52,7 @@ const CONFIG = {
     },
     initial: {
         mode: "seed", // "random", "seed"
-        patternSize: 16,
+        patternSize: 32,
         resolutionFactor: 2, // scaled block side must be a positive integer and divide the seed size
         symmetry: "D4", // "plain", "D4"
         placement: "tiled", // "tiled", "center", "corners"
@@ -62,7 +64,7 @@ const CONFIG = {
         matchRunFraction: 1 // fraction of state-based history required as consecutive matches (at most depth / 4 for periods up to depth / 4)
     },
     view: {
-        orientation: "sideways", // "sideways", "vertical"
+        orientation: "vertical", // "sideways", "vertical"
         presets: {
             sideways: {
                 depthMultiplier: 1,
@@ -132,6 +134,13 @@ function resolveConfig(config) {
     };
     let pn = config.pn;
     if (simulation.algorithm === "PN") {
+        const movementUnit = Object.hasOwn(pn, "movementUnit") ? pn.movementUnit : null;
+        const slope = Object.hasOwn(pn, "slope") ? pn.slope : null;
+        if (slope !== null) {
+            requireValue(Array.isArray(slope) && slope.length === 2 && slope.every(float32) &&
+                slope[0] >= 0 && slope[0] <= slope[1],
+                "pn.slope must be a nonnegative ordered pair of finite float32 numbers");
+        }
         const noiseDrift = Object.hasOwn(pn, "noiseDrift") ? pn.noiseDrift : [0, 0];
         const noiseSteering = Object.hasOwn(pn, "noiseSteering") ? pn.noiseSteering : false;
         requireValue(Array.isArray(noiseDrift) && noiseDrift.length === 2 &&
@@ -142,13 +151,15 @@ function resolveConfig(config) {
         nonnegativeNumber(pn.noiseTimeScale, "pn.noiseTimeScale");
         pn = {
             ...pn,
+            movementUnit,
+            slope,
             noiseDrift: scaleRange(noiseDrift, 1 / factor),
             noiseSteering,
             noiseSpaceScale: scale(pn.noiseSpaceScale, 1 / factor),
             noiseTimeScale: scale(pn.noiseTimeScale, 1 / factor)
         };
         if (pn.mode === "trajectory" && pn.trajectory && typeof pn.trajectory === "object") {
-            const trajectory = pn.trajectory;
+            const trajectory = { ...pn.trajectory, slope: slope ?? pn.trajectory.slope };
             for (const name of TRAJECTORY_PARAMETERS) {
                 const range = trajectory[name];
                 requireValue(Array.isArray(range) && range.length === 2 && range.every(float32) &&
@@ -218,6 +229,24 @@ function resolveConfig(config) {
         choice(pn.mode, ["legacy", "trajectory"], "pn.mode");
         choice(pn.boundary, ["wrap", "grow"], "pn.boundary");
         positiveInteger(pn.maxCellsPerAxisPerLayer, "pn.maxCellsPerAxisPerLayer");
+        let ticksPerCell = 1;
+        if (pn.movementUnit !== null) {
+            positiveNumber(pn.movementUnit, "pn.movementUnit");
+            requireValue(Math.fround(pn.movementUnit) > 0, "pn.movementUnit must be representable as a positive float32");
+            ticksPerCell = grid.cellSize / pn.movementUnit;
+            requireValue(Number.isSafeInteger(ticksPerCell) && ticksPerCell >= 1,
+                "pn.movementUnit must divide grid.cellSize into a positive safe integer number of ticks");
+            requireValue(Number.isSafeInteger(grid.cols * ticksPerCell) &&
+                Number.isSafeInteger(grid.rows * ticksPerCell),
+                "PN position dimensions exceed the safe integer range");
+        }
+        requireValue(Number.isSafeInteger(pn.maxCellsPerAxisPerLayer * ticksPerCell),
+            "PN movement limit exceeds the safe integer range");
+        pn = { ...pn, ticksPerCell };
+        if (pn.mode === "legacy" && pn.slope !== null) {
+            requireValue(pn.slope[1] <= pn.maxCellsPerAxisPerLayer * ticksPerCell,
+                "pn.slope must not exceed pn.maxCellsPerAxisPerLayer in cellSize units");
+        }
         probability(pn.forwardProbability, "pn.forwardProbability");
         nonnegativeNumber(pn.noiseSpaceScale, "pn.noiseSpaceScale");
         nonnegativeNumber(pn.noiseTimeScale, "pn.noiseTimeScale");
@@ -279,15 +308,16 @@ function resolveConfig(config) {
         const speedBound = trajectory.slope[1] + maxBend * (generations - 1) +
             2 * Math.PI * (trajectory.amplitude[1] / trajectory.wavelength[0]);
         console.log("PN trajectory movement bound (cells per axis per layer):", {
-            speedBound,
-            minimumIntegerLimit: Math.max(1, Math.ceil(speedBound)),
+            speedBound: speedBound / pn.ticksPerCell,
+            minimumIntegerLimit: Math.max(1, Math.ceil(speedBound / pn.ticksPerCell)),
             configuredLimit: pn.maxCellsPerAxisPerLayer,
+            ...(pn.movementUnit !== null ? { movementUnit: pn.movementUnit, movementUnitSpeedBound: speedBound } : {}),
             numGenerations: generations
         });
-        requireValue(speedBound <= pn.maxCellsPerAxisPerLayer,
+        requireValue(speedBound <= pn.maxCellsPerAxisPerLayer * pn.ticksPerCell,
             `pn.trajectory speed bound ${speedBound} must not exceed pn.maxCellsPerAxisPerLayer ` +
             `(${pn.maxCellsPerAxisPerLayer}): maxSlope + maxAbsBend * (generations - 1) + ` +
-            "2 * PI * maxAmplitude / minWavelength <= pn.maxCellsPerAxisPerLayer");
+            "2 * PI * maxAmplitude / minWavelength <= pn.maxCellsPerAxisPerLayer * ticksPerCell");
     }
     if (memory.enabled) {
         memoryCapacity = Math.max(memoryCapacity, Math.floor(depth / 4));
