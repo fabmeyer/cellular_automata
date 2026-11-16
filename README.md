@@ -65,6 +65,7 @@ scaling, and reproducible-seed behavior.
 | `simulation.seed` | Unsigned 32-bit integer for repeatable randomness, or `null` for a fresh generated seed | See config |
 | `simulation.timeInterval` | Nonnegative delay between generations, in ms | `1` |
 | `coloring.state0Alpha`, `coloring.otherStatesAlpha` | Optional alpha for state 0 and states 1+; `null` keeps the algorithm default; otherwise 0 is transparent and 1 is opaque | `null`, `null` |
+| `coloring.shading` | Directional face shading strength in [0, 1]; 0 draws flat colors | `0.5` |
 | `ca.rule` | `"counts"`, `"sum"`, `"majority"` | `"sum"` |
 | `ca.neighborhoodSize` | Positive odd side length; independent of seed size and grid factor | `3` |
 | `ca.emptyStateProbability` | Probability in [0, 1], shared by the two random CA rules | `0.5` |
@@ -417,7 +418,13 @@ By default, CA draws state 0 with alpha `0.5` and other states opaque; PN draws
 state 0 with alpha `0.05` and other states with alpha `0.95`. Set
 `coloring.state0Alpha` and `coloring.otherStatesAlpha` to numbers from 0 to 1 to
 override those defaults for either algorithm. Alpha 0 is fully transparent and
-alpha 1 is fully opaque.
+alpha 1 is fully opaque. Cells with alpha 0 are not drawn at all, so
+`state0Alpha: 0` removes the empty cubes and leaves solid colored structures.
+Cells with alpha of at least 0.5 are drawn first and write depth, so they render
+as solid cubes; fainter cells are then blended without writing depth, so they
+tint but never hide cubes drawn later behind them.
+`coloring.shading` lights the cubes from a fixed direction so top and side faces
+get different brightness.
 
 Memory stores the **x=0 row**, not the entire plane. It uses a bounded ring,
 hashes followed by exact row comparisons, and looks for consecutive matches at

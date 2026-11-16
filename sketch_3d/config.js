@@ -19,7 +19,8 @@ const CONFIG = {
     },
     coloring: {
         state0Alpha: null, // null keeps algorithm default; otherwise 0 (transparent) to 1 (opaque)
-        otherStatesAlpha: 1.0 // null keeps algorithm default; otherwise 0 (transparent) to 1 (opaque)
+        otherStatesAlpha: null, // null keeps algorithm default; otherwise 0 (transparent) to 1 (opaque)
+        shading: 0.0 // directional face shading: 0 (flat colors) to 1 (strongest)
     },
     ca: {
         rule: "sum", // "counts", "sum", "majority"
@@ -191,6 +192,9 @@ function resolveConfig(config) {
         if (coloring[name] !== null) {
             probability(coloring[name], `coloring.${name}`);
         }
+    }
+    if (Object.hasOwn(coloring, "shading")) {
+        probability(coloring.shading, "coloring.shading");
     }
     requireValue(int32(simulation.states) && simulation.states >= 2 && simulation.states <= 9,
         "simulation.states must be an integer between 2 and 9");

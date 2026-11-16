@@ -6,9 +6,12 @@ class GridRenderer {
         const state0Alpha = settings.coloring.state0Alpha ?? (isCA ? 0.5 : 0.05);
         const otherStatesAlpha = settings.coloring.otherStatesAlpha ?? (isCA ? 1 : 0.95);
         this.coloring = { state0Alpha, otherStatesAlpha };
+        this.shading = settings.coloring.shading ?? 0;
+        this.alphas = [state0Alpha];
         this.colors = [`rgba(0, 0, 0, ${state0Alpha})`];
         for (let state = 1; state < settings.simulation.states; state++) {
             const rgb = Array.from({ length: 3 }, () => Math.floor(random() * 255));
+            this.alphas.push(otherStatesAlpha);
             this.colors.push(otherStatesAlpha === 1
                 ? `rgb(${rgb.join(", ")})`
                 : `rgba(${rgb.join(", ")}, ${otherStatesAlpha})`);
@@ -132,7 +135,9 @@ class GridRenderer {
             precision highp float;
             precision highp int;
             in vec3 aPosition;
+            in vec3 aNormal;
             uniform mat4 uModelViewMatrix;
+            uniform mat3 uNormalMatrix;
             uniform mat4 uProjectionMatrix;
             uniform sampler2D states;
             uniform int rows;
@@ -140,6 +145,9 @@ class GridRenderer {
             uniform float cellSize;
             uniform float layerZ;
             uniform vec4 palette[9];
+            uniform float shading;
+            uniform int pass;
+            const vec3 lightDirection = normalize(vec3(0.35, -0.8, 0.5));
             flat out vec4 cellColor;
             ${sparse ? `
             uniform int dataWidth;
@@ -163,6 +171,13 @@ class GridRenderer {
                 vec3 offset = vec3((vec2(x, y) - gridSize / 2.0 + 0.5) * cellSize, layerZ);
                 `}
                 cellColor = palette[state];
+                // Pass 0 draws mostly opaque cells, pass 1 faint ones; skipped instances collapse off-screen.
+                if (cellColor.a == 0.0 || (pass == 0) != (cellColor.a >= ${GridRenderer.solidAlpha.toFixed(2)})) {
+                    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+                    return;
+                }
+                float diffuse = max(dot(normalize(uNormalMatrix * aNormal), lightDirection), 0.0);
+                cellColor.rgb *= mix(1.0, 0.35 + 0.65 * diffuse, shading);
                 gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition + offset, 1.0);
             }`, `#version 300 es
             precision highp float;
@@ -185,7 +200,7 @@ class GridRenderer {
                 mask[x * rows + y] = 1;
             }
         }
-        for (let x = 0; x < cols; x++) {
+        for (let x = 0; x < cols && this.alphas[0] > 0; x++) {
             for (let y = 0; y < rows; y++) {
                 if (mask[x * rows + y] === 0) {
                     yield { x: (x + 0.5 - cols / 2) * cellSize,
@@ -200,7 +215,9 @@ class GridRenderer {
             if (!Number.isFinite(Math.fround(x)) || !Number.isFinite(Math.fround(y))) {
                 throw new Error(`PN rendered position exceeds float32 range at layer ${zIndex}`);
             }
-            yield { x, y, state: cell.state };
+            if (this.alphas[cell.state] > 0) {
+                yield { x, y, state: cell.state };
+            }
         }
     }
 
@@ -230,6 +247,36 @@ class GridRenderer {
         return count;
     }
 
+    // Cells at or above this alpha write depth; fainter cells only tint and never hide cubes drawn later behind them.
+    static solidAlpha = 0.5;
+
+    drawInstances(shader, cube, count) {
+        const p = this.drawing;
+        shader.setUniform("pass", 0);
+        p.model(cube, count);
+        if (this.alphas.some(alpha => alpha > 0 && alpha < GridRenderer.solidAlpha)) {
+            shader.setUniform("pass", 1);
+            this.gl.depthMask(false);
+            try {
+                p.model(cube, count);
+            } finally {
+                this.gl.depthMask(true);
+            }
+        }
+    }
+
+    // Used by the box() fallback; the instanced shader applies the same light itself.
+    applyLights() {
+        const p = this.drawing;
+        if (this.shading > 0 && typeof p.directionalLight === "function") {
+            const directional = 255 * 0.65 * this.shading;
+            p.ambientLight(255 - directional);
+            p.directionalLight(directional, directional, directional, -0.35, 0.8, -0.5);
+        } else {
+            p.ambientLight(255);
+        }
+    }
+
     // Mirrors drawLayer: rotateX, rotateY, rotateZ applied to the model, so vertices see Rx(Ry(Rz(v))).
     static projectedHalfExtents(halfSize, rotation) {
         const [ax, ay, az] = rotation.map(turn => Math.PI * turn);
@@ -256,7 +303,7 @@ class GridRenderer {
         const { cols, rows, cellSize } = this.settings.grid;
         p.noStroke();
         p.noLights();
-        p.ambientLight(255);
+        this.applyLights();
         p.push();
         const [rx, ry, rz] = this.settings.preset.rotation;
         p.rotateX(Math.PI * rx);
@@ -275,8 +322,9 @@ class GridRenderer {
                     shader.setUniform("dataWidth", dataWidth);
                     shader.setUniform("layerZ", layerZ);
                     shader.setUniform("palette", palette);
+                    shader.setUniform("shading", this.shading);
                     if (count > 0) {
-                        p.model(cube, count);
+                        this.drawInstances(shader, cube, count);
                     }
                     p.resetShader();
                 } catch (error) {
@@ -311,7 +359,8 @@ class GridRenderer {
                 shader.setUniform("cellSize", cellSize);
                 shader.setUniform("layerZ", (zIndex + 0.5) * cellSize - this.settings.depth * cellSize / 2);
                 shader.setUniform("palette", palette);
-                p.model(cube, cols * rows);
+                shader.setUniform("shading", this.shading);
+                this.drawInstances(shader, cube, cols * rows);
                 p.resetShader();
             } catch (error) {
                 this.assertContext();
@@ -320,6 +369,9 @@ class GridRenderer {
         } else {
             for (let x = 0; x < cols; x++) {
                 for (let y = 0; y < rows; y++) {
+                    if (this.alphas[layer[x * rows + y]] === 0) {
+                        continue;
+                    }
                     p.push();
                     p.fill(this.colors[layer[x * rows + y]]);
                     p.translate(x * cellSize - cols * cellSize / 2 + cellSize / 2,
@@ -331,6 +383,9 @@ class GridRenderer {
             }
         }
         for (const cell of grid.outsideLayers?.[zIndex]?.values() ?? []) {
+            if (this.alphas[cell.state] === 0) {
+                continue;
+            }
             p.push();
             p.fill(this.colors[cell.state]);
             p.translate(cell.x * cellSize - cols * cellSize / 2 + cellSize / 2,

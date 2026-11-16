@@ -79,6 +79,37 @@ test('configured state alpha overrides apply to CA and PN palettes', () => {
     }
 });
 
+test('cells with alpha 0 are not drawn for CA and PN', () => {
+    for (const algorithm of ['CA', 'PN']) {
+        const { subject, classes } = createHarness({
+            grid: { cols: 2, rows: 1 }, simulation: { algorithm, states: 2 },
+            initial: { mode: 'random' }, ca: { neighborhoodSize: 1 },
+            pn: { movementUnit: null }, coloring: { state0Alpha: 0, otherStatesAlpha: 1 }
+        });
+        const { drawing, calls } = drawingStub();
+        const renderer = new classes.GridRenderer(subject.settings, drawing, () => 0.5);
+        subject.initialize();
+        subject.grid.set(0, 0, 0, 0);
+        subject.grid.set(1, 0, 0, 1);
+        renderer.drawLayer(subject.grid, 0);
+        assert.deepEqual(calls.filter(([name]) => name === 'fill').map(([, color]) => color),
+            ['rgb(127, 127, 127)'], algorithm);
+    }
+});
+
+test('PN position mode omits empty cells when state 0 alpha is 0', () => {
+    const { subject, classes } = createHarness({
+        grid: { cols: 2, rows: 2, baseDepth: 2 }, simulation: { algorithm: 'PN', states: 2, numGenerations: 2 },
+        initial: { mode: 'random' }, memory: { enabled: false },
+        pn: { movementUnit: 1 }, coloring: { state0Alpha: 0 }
+    }, { random: () => 0.75 });
+    const renderer = new classes.GridRenderer(subject.settings, drawingStub().drawing, () => 0.5);
+    subject.initialize();
+    const cells = [...renderer.positionCells(subject.grid, 0)];
+    assert.ok(cells.length > 0);
+    assert.ok(cells.every(cell => cell.state !== 0));
+});
+
 test('all 756 algorithm/rule/cycling, initializer, view, memory, and state-count combinations run and render', () => {
     let combinations = 0;
     for (const algorithm of algorithms) {
@@ -695,6 +726,14 @@ test('color alpha settings accept null or values in [0, 1] and reject out-of-ran
             assert.throws(() => classes.resolveConfig(config), new RegExp(`coloring\\.${name}`), name);
             config.coloring[name] = null;
         }
+    }
+    for (const value of [0, 0.5, 1]) {
+        config.coloring.shading = value;
+        assert.doesNotThrow(() => classes.resolveConfig(config));
+    }
+    for (const value of [-0.01, 1.01, NaN, null]) {
+        config.coloring.shading = value;
+        assert.throws(() => classes.resolveConfig(config), /coloring\.shading/);
     }
 });
 
