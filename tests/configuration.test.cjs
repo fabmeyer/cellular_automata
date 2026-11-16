@@ -1064,8 +1064,34 @@ test('CA neighborhood and per-layer update cadence do not scale with grid factor
     }
 });
 
+test('fractional grid factors below one are accepted when scaled settings remain valid', () => {
+    const { classes, config } = createHarness({
+        grid: { factor: 0.25, cols: 2, rows: 2, baseDepth: 2 },
+        simulation: { numGenerations: 2 },
+        initial: { mode: 'random', resolutionFactor: 4 },
+        memory: { enabled: false }
+    });
+    const resolved = classes.resolveConfig(config);
+    assert.equal(resolved.grid.factor, 0.25);
+    assert.equal(resolved.initial.resolutionFactor, 1);
+});
+
+test('memory counts stay positive integers when scaled by fractional grid factors', () => {
+    for (const [factor, resolutionFactor, expected] of [[0.25, 4, 20], [0.01, 100, 1]]) {
+        const { classes, config } = createHarness();
+        Object.assign(config.grid, { factor, cols: 2, rows: 2, baseDepth: 2 });
+        Object.assign(config.simulation, { numGenerations: 2 });
+        Object.assign(config.initial, { mode: 'random', resolutionFactor });
+        config.memory.enabled = true;
+
+        const simulation = new classes.Simulation(config, () => 0, () => 0);
+        assert.equal(simulation.settings.memoryCapacity, expected);
+        assert.equal(simulation.settings.matchRunLength, expected);
+    }
+});
+
 test('factor and seed reject invalid values and validate scaled results', () => {
-    for (const factor of [0, -1, 1.5, NaN, Infinity, '4', null, undefined, 2147483648]) {
+    for (const factor of [0, -1, NaN, Infinity, '4', null, undefined, 2147483648]) {
         assert.throws(() => createHarness({ grid: { factor } }), /grid\.factor/);
     }
     for (const seed of [-1, 1.5, NaN, Infinity, '1', undefined, 4294967296]) {

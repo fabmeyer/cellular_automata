@@ -1,7 +1,7 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        factor: 1,
+        factor: 4.0,
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
@@ -14,12 +14,12 @@ const CONFIG = {
             return 2.0 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
         }, // includes the initial layer
         retainHistory: false, // true keeps all simulated layers in memory
-        seed: 1268502912, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
+        seed: 2709487604, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
         timeInterval: 1
     },
     coloring: {
         state0Alpha: null, // null keeps algorithm default; otherwise 0 (transparent) to 1 (opaque)
-        otherStatesAlpha: null // null keeps algorithm default; otherwise 0 (transparent) to 1 (opaque)
+        otherStatesAlpha: 1.0 // null keeps algorithm default; otherwise 0 (transparent) to 1 (opaque)
     },
     ca: {
         rule: "sum", // "counts", "sum", "majority"
@@ -32,21 +32,21 @@ const CONFIG = {
         boundary: "grow", // "wrap", "grow"
         movementUnit: 1, // null uses cellSize; otherwise a positive divisor of cellSize, e.g. 1
         slope: null, // shared [min, max] movement units per layer; null keeps each mode's existing speed
-        maxCellsPerAxisPerLayer: 1000, // integer
+        maxCellsPerAxisPerLayer: 300, // integer
         forwardProbability: 1.0,
-        noiseSpaceScale: 0.02,
-        noiseTimeScale: 0.1,
-        noiseDrift: [0.0, 0.0], // noise-coordinate units per layer along x/y
+        noiseSpaceScale: 0.0075,
+        noiseTimeScale: 0.0125,
+        noiseDrift: [0.00125, 0.00125], // noise-coordinate units per layer along x/y
         noiseSteering: false,
         trajectory: {
-            slope: [0.0, 0.0], // fallback when pn.slope is null; movement units per layer
-            bend: [-0.01, 0.01], // change in slope per layer
-            amplitude: [32, 256],
-            wavelength: [32, 1024],
-            phase: [0, 2 * Math.PI], // radians
+            slope: [0.1, 0.5], // fallback when pn.slope is null; movement units per layer
+            bend: [-0.025, 0.025], // change in slope per layer
+            amplitude: [64, 256],
+            wavelength: [128, 512],
+            phase: [2*Math.PI, 2*Math.PI], // radians
             parameterNoise: {
-                spaceScale: 0.02,
-                channels: "shared" // "separate", "shared"
+                spaceScale: 0.0075,
+                channels: "separate" // "separate", "shared"
             }
         }
     },
@@ -120,7 +120,8 @@ function resolveConfig(config) {
     const { grid, simulation, view, memory, coloring } = config;
     const factor = Object.hasOwn(grid, "factor") ? grid.factor : 1;
     const seed = Object.hasOwn(simulation, "seed") ? simulation.seed : null;
-    positiveInteger(factor, "grid.factor");
+    positiveNumber(factor, "grid.factor");
+    requireValue(factor <= INT32_MAX, "grid.factor must not exceed 2147483647");
     const scale = (value, multiplier) => typeof value === "number" ? value * multiplier : value;
     const scaleRange = (range, multiplier) => Array.isArray(range)
         ? range.map(value => scale(value, multiplier)) : range;
@@ -256,12 +257,12 @@ function resolveConfig(config) {
     let matchRunLength = 0;
     if (memory.enabled) {
         positiveInteger(memory.capacityMultiplier, "memory.capacityMultiplier");
-        memoryCapacity = memory.capacityMultiplier * simulation.states ** 2 * factor;
+        memoryCapacity = Math.max(1, Math.floor(memory.capacityMultiplier * simulation.states ** 2 * factor));
         positiveInteger(memoryCapacity, "memory capacity");
         probability(memory.matchRunFraction, "memory.matchRunFraction");
         requireValue(memory.matchRunFraction > 0, "memory.matchRunFraction must be greater than 0");
         matchRunLength = Math.max(1,
-            Math.floor(memory.capacityMultiplier * simulation.states ** 2 * memory.matchRunFraction)) * factor;
+            Math.floor(memory.capacityMultiplier * simulation.states ** 2 * memory.matchRunFraction * factor));
         positiveInteger(matchRunLength, "memory match run length");
     }
     choice(view.orientation, ["sideways", "vertical"], "view.orientation");
