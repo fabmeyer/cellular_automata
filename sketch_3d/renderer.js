@@ -103,6 +103,101 @@ class GridRenderer {
         }
     }
 
+    finish() {
+        if (this.finished) {
+            return;
+        }
+        this.assertContext();
+        if (this.settings.view.glow?.enabled && this.settings.view.glow.intensity !== 0) {
+            this.applyGlow();
+        }
+        this.assertContext();
+        this.finished = true;
+    }
+
+    applyGlow() {
+        const p = this.drawing;
+        const gl = this.gl;
+        const { cutoff, radius, intensity = 1 } = this.settings.view.glow;
+        const { canvasWidth, canvasHeight } = this.settings;
+        let original;
+        try {
+            original = p.createFramebuffer({
+                width: canvasWidth, height: canvasHeight, density: 1,
+                depth: false, antialias: false, channels: p.RGBA,
+                format: p.UNSIGNED_BYTE, textureFiltering: p.NEAREST
+            });
+            const binding = gl.getParameter(gl.TEXTURE_BINDING_2D);
+            try {
+                // Preserve the completed canvas on the GPU, without a CPU pixel readback.
+                gl.bindTexture(gl.TEXTURE_2D, original.color.rawTexture().texture);
+                gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, canvasWidth, canvasHeight);
+            } finally {
+                gl.bindTexture(gl.TEXTURE_2D, binding);
+            }
+            this.assertGlowContext();
+            const shader = p.createFilterShader(`#version 300 es
+                precision highp float;
+                precision highp int;
+                uniform sampler2D tex0;
+                uniform sampler2D original;
+                uniform vec2 texelSize;
+                uniform float cutoff;
+                uniform float intensity;
+                uniform int radius;
+                uniform bool horizontal;
+                in vec2 vTexCoord;
+                out vec4 outColor;
+                vec3 sampleGlow(vec2 uv) {
+                    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+                        return vec3(0.0);
+                    }
+                    vec3 color = texture(tex0, uv).rgb;
+                    if (horizontal && floor(max(max(color.r, color.g), color.b) * 255.0 + 0.5) <= cutoff) {
+                        return vec3(0.0);
+                    }
+                    return color;
+                }
+                void main() {
+                    vec2 stepSize = horizontal ? vec2(texelSize.x, 0.0) : vec2(0.0, texelSize.y);
+                    vec3 sum = sampleGlow(vTexCoord);
+                    float total = 1.0;
+                    for (int i = 1; i <= radius; i++) {
+                        float distance = float(i) / float(radius);
+                        float weight = exp(-4.5 * distance * distance);
+                        vec2 offset = stepSize * float(i);
+                        sum += weight * (sampleGlow(vTexCoord - offset) + sampleGlow(vTexCoord + offset));
+                        total += 2.0 * weight;
+                    }
+                    vec3 glow = sum / total;
+                    // Raw canvas copies have the opposite Y origin to p5's filter input.
+                    vec4 base = texture(original, vec2(vTexCoord.x, 1.0 - vTexCoord.y));
+                    outColor = horizontal ? vec4(glow, 1.0)
+                        : vec4(min(base.rgb + intensity * glow, vec3(1.0)), base.a);
+                }`);
+            shader.setUniform("original", original);
+            shader.setUniform("cutoff", cutoff * 255);
+            shader.setUniform("intensity", intensity);
+            shader.setUniform("radius", radius);
+            shader.setUniform("horizontal", true);
+            p.filter(shader);
+            this.assertGlowContext();
+            shader.setUniform("horizontal", false);
+            p.filter(shader);
+            this.assertGlowContext();
+        } finally {
+            original?.remove();
+        }
+    }
+
+    assertGlowContext() {
+        this.assertContext();
+        const error = this.gl.getError();
+        if (error !== this.gl.NO_ERROR) {
+            throw this.allocationError(`glow postprocessing failed (WebGL error ${error})`);
+        }
+    }
+
     // Draws a whole layer with one instanced call; returns null when the context cannot (e.g. test stubs, WebGL1).
     createInstancing() {
         const p = this.drawing;

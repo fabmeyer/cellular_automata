@@ -6,6 +6,177 @@ const { createCanvas, loadImage } = require('canvas');
 const { createLocalServer, fitViewportToCanvas, forwardConsoleMessage, waitForSimulation } =
     require('../scripts/run-headless.cjs');
 
+test('final glow matches Gaussian pixels, cutoff boundaries, and the exported PNG', async t => {
+    const server = createLocalServer();
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const browser = await puppeteer.launch({ headless: true });
+    t.after(() => browser.close());
+    const page = await browser.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.evaluateOnNewDocument(() => {
+        window.addEventListener('DOMContentLoaded', () => {
+            CONFIG.grid = { factor: 1, cols: 2, rows: 2, baseDepth: 1, cellSize: 1 };
+            CONFIG.simulation = { ...CONFIG.simulation, algorithm: 'CA', states: 2, numGenerations: 1 };
+            CONFIG.initial = { mode: 'random', resolutionFactor: 1 };
+            CONFIG.memory.enabled = false;
+            CONFIG.view.orientation = 'sideways';
+            CONFIG.view.antialias = false;
+            CONFIG.view.presets.sideways = {
+                depthMultiplier: 1, canvasScale: [32, 32], rotation: [0, 0, 0]
+            };
+            CONFIG.view.glow = { enabled: false, cutoff: 0.9, radius: 16 };
+        });
+    });
+    await page.goto(`http://127.0.0.1:${server.address().port}`);
+    await page.waitForFunction(() => window.simulationDone || window.simulationError);
+    await page.addStyleTag({ content: 'canvas { border: 0; }' });
+    const run = options => page.evaluate(options => {
+        if (window.simulationError) throw new Error(window.simulationError);
+        const gl = renderer.gl;
+        const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
+        gl.enable(gl.SCISSOR_TEST);
+        for (const [x, y, w, h, color] of [
+            [0, 0, width, height, [10, 12, 14]],
+            [20, 23, 9, 7, options.color],
+            [0, 3, 5, 6, options.color]
+        ]) {
+            gl.scissor(x, y, w, h);
+            gl.clearColor(...color.map(value => value / 255), 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+        }
+        gl.disable(gl.SCISSOR_TEST);
+        const read = () => {
+            const pixels = new Uint8Array(width * height * 4);
+            gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+            return Array.from(pixels);
+        };
+        const before = read();
+        renderer.settings.view.glow = options;
+        renderer.finished = false;
+        renderer.finish();
+        const after = read();
+        renderer.finish();
+        return { before, after, repeated: read(), width, height, error: gl.getError() };
+    }, options);
+    for (const options of [
+        { enabled: false, cutoff: 0.9, radius: 16, color: [255, 40, 20] },
+        { enabled: true, cutoff: 0.9, radius: 3, color: [229, 40, 20] },
+        { enabled: true, cutoff: 230 / 255, radius: 3, color: [230, 40, 20] },
+        { enabled: true, cutoff: 1, radius: 3, color: [255, 255, 255] },
+        { enabled: true, cutoff: 0.9, radius: 3, color: [230, 40, 20] },
+        { enabled: true, cutoff: 0, radius: 3, color: [20, 40, 255] },
+        ...[0, 0.5, 1, 2].map(intensity =>
+            ({ enabled: true, cutoff: 0.9, radius: 3, intensity, color: [255, 40, 20] })),
+        ...[1, 3, 8, 16].map(radius =>
+            ({ enabled: true, cutoff: 0.9, radius, color: [255, 40, 20] }))
+    ]) {
+        const result = await run(options);
+        assert.equal(result.error, 0);
+        assert.deepEqual(result.repeated, result.after, 'finish must not add glow twice');
+        const { width, height, before, after } = result;
+        const intensity = options.intensity ?? 1;
+        const generatesGlow = options.enabled && intensity > 0 &&
+            Math.max(...options.color) / 255 > options.cutoff;
+        if (!generatesGlow) {
+            assert.deepEqual(after, before, JSON.stringify(options));
+            continue;
+        }
+        const radius = options.radius;
+        const weights = Array.from({ length: radius * 2 + 1 },
+            (_, i) => Math.exp(-4.5 * ((i - radius) / radius) ** 2));
+        const total = weights.reduce((sum, weight) => sum + weight, 0);
+        const horizontal = new Float64Array(before.length);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    if (x + dx < 0 || x + dx >= width) continue;
+                    const source = (y * width + x + dx) * 4;
+                    if (Math.max(...before.slice(source, source + 3)) / 255 <= options.cutoff) continue;
+                    for (let c = 0; c < 3; c++) {
+                        horizontal[(y * width + x) * 4 + c] +=
+                            before[source + c] * weights[dx + radius] / total;
+                    }
+                }
+            }
+        }
+        let changed = 0;
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const index = (y * width + x) * 4;
+                for (let c = 0; c < 3; c++) {
+                    let glow = 0;
+                    for (let dy = -radius; dy <= radius; dy++) {
+                        if (y + dy < 0 || y + dy >= height) continue;
+                        glow += horizontal[((y + dy) * width + x) * 4 + c] * weights[dy + radius] / total;
+                    }
+                    const expected = Math.min(255, Math.round(before[index + c] + intensity * glow));
+                    const tolerance = Math.max(1, Math.ceil((intensity + 1) / 2));
+                    assert.ok(Math.abs(after[index + c] - expected) <= tolerance,
+                        `radius=${radius}, intensity=${intensity}, (${x},${y}), channel=${c}: ` +
+                        `${after[index + c]} vs ${expected}`);
+                    assert.ok(after[index + c] >= before[index + c], 'original image must not darken');
+                    if (after[index + c] !== before[index + c]) changed++;
+                    if (glow === 0) assert.equal(after[index + c], before[index + c]);
+                }
+                assert.equal(after[index + 3], before[index + 3]);
+            }
+        }
+        assert.ok(changed > 0);
+        const canvasElement = await page.$('canvas');
+        const image = await loadImage(Buffer.from(await canvasElement.screenshot({ type: 'png' })));
+        const canvas = createCanvas(width, height);
+        const context = canvas.getContext('2d');
+        context.drawImage(image, 0, 0);
+        const png = context.getImageData(0, 0, width, height).data;
+        for (let y = 0; y < height; y++) {
+            assert.deepEqual(Array.from(png.slice(y * width * 4, (y + 1) * width * 4)),
+                after.slice((height - y - 1) * width * 4, (height - y) * width * 4));
+        }
+    }
+    assert.deepEqual(errors, []);
+});
+
+test('CA and PN complete glow before signaling export readiness', async t => {
+    const server = createLocalServer();
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const browser = await puppeteer.launch({ headless: true });
+    t.after(() => browser.close());
+    for (const algorithm of ['CA', 'PN']) {
+        for (const generations of [1, 3]) {
+            const page = await browser.newPage();
+            await page.evaluateOnNewDocument(({ algorithm, generations }) => {
+                window.addEventListener('DOMContentLoaded', () => {
+                    CONFIG.grid = { factor: 1, cols: 2, rows: 2, baseDepth: 2, cellSize: 1 };
+                    CONFIG.simulation = { ...CONFIG.simulation, algorithm, states: 2,
+                        numGenerations: generations, timeInterval: 0 };
+                    CONFIG.pn = { ...CONFIG.pn, mode: 'legacy', slope: [0, 0] };
+                    CONFIG.initial = { mode: 'random', resolutionFactor: 1 };
+                    CONFIG.memory.enabled = false;
+                    CONFIG.view.orientation = 'sideways';
+                    CONFIG.view.presets.sideways = {
+                        depthMultiplier: 1, canvasScale: [8, 8], rotation: [0, 0, 0]
+                    };
+                    CONFIG.view.background = 255;
+                    CONFIG.view.glow = { enabled: true, cutoff: 0.9, radius: 3 };
+                });
+            }, { algorithm, generations });
+            await page.goto(`http://127.0.0.1:${server.address().port}`);
+            await page.waitForFunction(() => window.simulationDone || window.simulationError);
+            const result = await page.evaluate(() => ({
+                done: window.simulationDone, error: window.simulationError,
+                finished: renderer.finished, nextZ: simulation.nextZ
+            }));
+            assert.deepEqual(result, { done: true, error: null, finished: true, nextZ: generations });
+            await page.close();
+        }
+    }
+});
+
 test('PN position instancing renders one-unit shifts with unchanged 4/8-unit footprints', async t => {
     const server = createLocalServer();
     t.after(() => new Promise(resolve => server.close(resolve)));

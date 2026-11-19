@@ -16,6 +16,60 @@ const algorithms = [
         [false, true].map(cycle => ({ algorithm: 'CA', rule, cycle })))
 ];
 
+test('glow validates active settings and preserves pixel radius across grid factors', () => {
+    for (const algorithm of ['CA', 'PN']) {
+        for (const [name, values] of [
+            ['enabled', [null, 1, 'true']],
+            ['cutoff', [-0.01, 1.01, NaN, Infinity, '0.9', undefined]],
+            ['radius', [0, -1, 1.5, Infinity, 2147483648, '16', undefined]],
+            ['intensity', [-1, NaN, Infinity, null, '1', 3.5e38]]
+        ]) {
+            for (const value of values) {
+                assert.throws(() => createHarness({
+                    simulation: { algorithm },
+                    view: { glow: { enabled: true, cutoff: 0.9, radius: 16, [name]: value } }
+                }), new RegExp(`view.glow.${name}`));
+            }
+        }
+    }
+    const { config, classes } = createHarness();
+    for (const glow of [null, [], false]) {
+        config.view.glow = glow;
+        assert.throws(() => classes.resolveConfig(config), /view.glow must be an object/);
+    }
+    delete config.view.glow;
+    assert.deepEqual(plain(classes.resolveConfig(config).view.glow),
+        { enabled: false, cutoff: 0.9, radius: 16, intensity: 1 });
+    config.view.glow = { enabled: false, cutoff: NaN, radius: -1, intensity: NaN };
+    assert.doesNotThrow(() => classes.resolveConfig(config));
+    for (const factor of [1, 4]) {
+        for (const cutoff of [0, 0.9, 1]) {
+            const { subject } = createHarness({ grid: { factor },
+                view: { glow: { enabled: true, cutoff, radius: 16 } } });
+            assert.deepEqual(plain(subject.settings.view.glow), { enabled: true, cutoff, radius: 16, intensity: 1 });
+        }
+    }
+    for (const intensity of [0, 0.5, 1, 2]) {
+        const { subject } = createHarness({
+            view: { glow: { enabled: true, cutoff: 0.9, radius: 16, intensity } }
+        });
+        assert.equal(subject.settings.view.glow.intensity, intensity);
+    }
+});
+
+test('zero glow intensity skips GPU postprocessing', () => {
+    const { subject, classes } = createHarness({
+        view: { glow: { enabled: true, cutoff: 0.9, radius: 16, intensity: 0 } }
+    });
+    const { drawing, calls } = drawingStub();
+    const renderer = new classes.GridRenderer(subject.settings, drawing);
+    renderer.setup();
+    const before = calls.length;
+    renderer.finish();
+    assert.equal(renderer.finished, true);
+    assert.equal(calls.length, before);
+});
+
 test('PN drift and steering validate inputs and default missing options compatibly', () => {
     for (const noiseDrift of [null, [], [1], [1, 2, 3], new Array(2), [NaN, 0], [0, Infinity], ['1', 0]]) {
         assert.throws(() => createHarness({ pn: { noiseDrift } }), /pn.noiseDrift/);

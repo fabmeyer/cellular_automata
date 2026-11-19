@@ -183,7 +183,8 @@ function logSimulationSettings(settings, coloring, seedSource) {
             canvasScale: settings.preset.canvasScale, rotation: settings.preset.rotation,
             cameraPadding: view.cameraPadding, zoom: view.zoom, antialias: view.antialias,
             background: view.background, depth: settings.depth,
-            canvasWidth: settings.canvasWidth, canvasHeight: settings.canvasHeight
+            canvasWidth: settings.canvasWidth, canvasHeight: settings.canvasHeight,
+            glow: view.glow
         }
     };
     console.log("Simulation settings:", JSON.stringify(record));
@@ -218,11 +219,18 @@ function setup() {
         if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
             frameTimer = setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
         } else {
-            globalThis.simulationDone = true;
+            finishSimulation();
         }
     } catch (error) {
         recordSimulationError(error);
         throw error;
+    }
+}
+
+function finishSimulation() {
+    renderer.finish();
+    if (globalThis.simulationError === null) {
+        globalThis.simulationDone = true;
     }
 }
 
@@ -245,7 +253,7 @@ function nextFrame() {
         if (simulation.nextZ < simulation.settings.simulation.numGenerations) {
             frameTimer = setTimeout(nextFrame, simulation.settings.simulation.timeInterval);
         } else {
-            globalThis.simulationDone = true;
+            finishSimulation();
         }
     } catch (error) {
         recordSimulationError(error);

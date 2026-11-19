@@ -138,6 +138,48 @@ test('headless completion is signaled only after the configured final generation
     assert.equal(vm.runInContext('simulation.grid.layers[0]', context), null);
 });
 
+test('glow runs once after all layers and before completion for CA and PN', () => {
+    for (const algorithm of ['CA', 'PN']) {
+        for (const generations of [1, 3]) {
+            const { context, timers, logs } = prepareSmallSimulation(generations);
+            const draws = [];
+            context.captureGlow = (done, nextZ) => draws.push({ done, nextZ });
+            vm.runInContext(`
+                CONFIG.simulation.algorithm = '${algorithm}';
+                CONFIG.view.glow = { enabled: true, cutoff: 0.9, radius: 16 };
+                GridRenderer.prototype.applyGlow = function() {
+                    captureGlow(globalThis.simulationDone, simulation.nextZ);
+                };
+                setup();
+            `, context);
+            if (generations > 1) assert.deepEqual(draws, []);
+            while (timers.length > 0) timers.shift()();
+            assert.deepEqual(draws, [{ done: false, nextZ: generations }]);
+            assert.equal(context.simulationDone, true);
+            vm.runInContext('renderer.finish()', context);
+            assert.equal(draws.length, 1);
+            const record = JSON.parse(logs.find(([label]) => label === 'Simulation settings:')[1]);
+            assert.deepEqual(record.view.glow, { enabled: true, cutoff: 0.9, radius: 16, intensity: 1 });
+        }
+    }
+});
+
+test('glow failures never report completion in single or multi-layer runs', () => {
+    for (const generations of [1, 3]) {
+        const { context, timers } = prepareSmallSimulation(generations);
+        vm.runInContext(`
+            CONFIG.view.glow.enabled = true;
+            GridRenderer.prototype.applyGlow = function() { throw new Error('glow failed'); };
+        `, context);
+        assert.throws(() => {
+            vm.runInContext('setup()', context);
+            while (timers.length > 0) timers.shift()();
+        }, /glow failed/);
+        assert.equal(context.simulationDone, false);
+        assert.match(context.simulationError, /glow failed/);
+    }
+});
+
 test('headless setup honors configured layer retention', () => {
     for (const retainHistory of [false, true]) {
         const { context, timers } = prepareSmallSimulation(3);

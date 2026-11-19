@@ -96,6 +96,18 @@ scaling, and reproducible-seed behavior.
 | `view.cameraPadding` | Margin around the tightly fitted block, at least 1; larger zooms out | `1.05` |
 | `view.zoom` | Positive zoom factor; above 1 zooms in, below 1 zooms out | `1` |
 | `view.background` | Grayscale background, 0 through 255 | `10` |
+| `view.glow.enabled` | Apply final-image glow in CA/PN and PNG exports | `false` |
+| `view.glow.cutoff` | Brightest RGB channel must be strictly above this fraction in [0, 1] | `0.9` |
+| `view.glow.radius` | Positive integer Gaussian support radius in canvas pixels; sigma = radius / 3 | `16` |
+| `view.glow.intensity` | Nonnegative glow multiplier: 0 off, 1 normal, above 1 stronger | `1` |
+
+Set `view.glow.enabled = true` to add colored Gaussian glow after the final
+layer. The original image stays sharp underneath the additive glow. Use
+`view.glow.intensity` to adjust strength independently of cutoff and radius.
+The radius does not scale with `grid.factor`; a radius of 16 always means 16 canvas pixels
+along each axis. Brightness is measured after shading and transparency, including
+the background. If nothing exceeds the cutoff, no glow appears. Enabled glow
+uses additional full-resolution GPU buffers; disabled glow adds no rendering cost.
 
 Active integer settings and derived integer dimensions must fit signed 32-bit
 range (`-2147483648` through `2147483647`). Active floating-point settings must

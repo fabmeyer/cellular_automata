@@ -1,20 +1,20 @@
 // Edit this object, then reload the page. No other file needs configuration.
 const CONFIG = {
     grid: {
-        factor: 4.0,
+        factor: 1.0,
         get cols() { return 96 * this.factor; },
         get rows() { return 96 * this.factor; },
         get baseDepth() { return 192 * this.factor; },
-        cellSize: 4 // cube side and layer spacing in model units
+        cellSize: 16 // cube side and layer spacing in model units
     },
     simulation: {
-        algorithm: "PN", // "CA", "PN"
-        get states() { return Math.min(9, CONFIG.initial.patternSize); },
+        algorithm: "CA", // "CA", "PN"
+        get states() { return Math.min(3, CONFIG.initial.patternSize); },
         get numGenerations() {
-            return 2.0 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
+            return 1.0 * CONFIG.grid.baseDepth * CONFIG.view.presets[CONFIG.view.orientation].depthMultiplier;
         }, // includes the initial layer
         retainHistory: false, // true keeps all simulated layers in memory
-        seed: 2709487604, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
+        seed: 2048000442, // null generates and logs a fresh seed; set an unsigned 32-bit integer to replay a run
         timeInterval: 1
     },
     coloring: {
@@ -23,9 +23,9 @@ const CONFIG = {
         shading: 0.0 // directional face shading: 0 (flat colors) to 1 (strongest)
     },
     ca: {
-        rule: "sum", // "counts", "sum", "majority"
-        neighborhoodSize: 3, // odd side length; includes the center cell
-        emptyStateProbability: 0.5, // shared by counts and sum
+        rule: "majority", // "counts", "sum", "majority"
+        neighborhoodSize: 7, // odd side length; includes the center cell
+        emptyStateProbability: 0.85, // shared by counts and sum
         cycleUniform: true
     },
     pn: {
@@ -54,7 +54,7 @@ const CONFIG = {
     initial: {
         mode: "seed", // "random", "seed"
         patternSize: 32,
-        resolutionFactor: 2, // scaled block side must be a positive integer and divide the seed size
+        resolutionFactor: 8, // scaled block side must be a positive integer and divide the seed size
         symmetry: "D4", // "plain", "D4"
         placement: "tiled", // "tiled", "center", "corners"
         loopPattern: true // corners only: repeat the seed instead of empty (state 0) surroundings; center and tiled always loop
@@ -65,7 +65,7 @@ const CONFIG = {
         matchRunFraction: 1 // fraction of state-based history required as consecutive matches (at most depth / 4 for periods up to depth / 4)
     },
     view: {
-        orientation: "vertical", // "sideways", "vertical"
+        orientation: "sideways", // "sideways", "vertical"
         presets: {
             sideways: {
                 depthMultiplier: 1,
@@ -81,7 +81,13 @@ const CONFIG = {
         cameraPadding: 1.05, // margin around the tightly fitted block; larger zooms out
         zoom: 1.0, // values above 1 zoom in; values below 1 zoom out
         antialias: true,
-        background: 10
+        background: 10,
+        glow: {
+            enabled: false, // applied once after the final layer, including PNG exports
+            cutoff: 0.90, // brightest RGB channel must be strictly above this fraction
+            radius: 128, // Gaussian support radius in canvas pixels; sigma = radius / 3
+            intensity: 1 // nonnegative glow multiplier; 0 disables the effect, 1 keeps normal strength
+        }
     }
 };
 
@@ -283,6 +289,16 @@ function resolveConfig(config) {
     requireValue(typeof view.antialias === "boolean", "view.antialias must be boolean");
     requireValue(float32(view.background) && view.background >= 0 && view.background <= 255,
         "view.background must be between 0 and 255");
+    const glow = Object.hasOwn(view, "glow") ? view.glow : { enabled: false, cutoff: 0.9, radius: 16 };
+    requireValue(glow !== null && typeof glow === "object" && !Array.isArray(glow),
+        "view.glow must be an object");
+    requireValue(typeof glow.enabled === "boolean", "view.glow.enabled must be boolean");
+    const glowIntensity = Object.hasOwn(glow, "intensity") ? glow.intensity : 1;
+    if (glow.enabled) {
+        probability(glow.cutoff, "view.glow.cutoff");
+        positiveInteger(glow.radius, "view.glow.radius");
+        nonnegativeNumber(glowIntensity, "view.glow.intensity");
+    }
     const depth = grid.baseDepth * preset.depthMultiplier;
     positiveInteger(depth, "effective depth");
     const generations = simulation.numGenerations;
@@ -333,6 +349,7 @@ function resolveConfig(config) {
     positiveInteger(canvasHeight, "canvas height");
     requireValue(float32(Math.hypot(grid.cols, grid.rows, depth) * grid.cellSize * view.cameraPadding),
         "grid and view dimensions must produce finite float32 camera bounds");
-    return { ...config, initial, pn, simulation: { ...simulation, seed, numGenerations: generations }, depth, preset,
+    return { ...config, initial, pn, view: { ...view, glow: { ...glow, intensity: glowIntensity } },
+        simulation: { ...simulation, seed, numGenerations: generations }, depth, preset,
         canvasWidth, canvasHeight, memoryCapacity, matchRunLength };
 }

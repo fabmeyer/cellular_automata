@@ -389,11 +389,44 @@ memory prevents both tracking and CA rule mutation.
 | `view.zoom` | `1.0` | Positive zoom: above 1 zooms in, below 1 zooms out. Zooming in can crop the block. |
 | `view.antialias` | `true` | Enable WebGL antialiasing; can increase GPU memory usage. |
 | `view.background` | `10` | Grayscale background from 0 to 255. |
+| `view.glow.enabled` | `false` | Apply Gaussian glow once after the final layer, in CA and PN and exported PNGs. |
+| `view.glow.cutoff` | `0.9` | Active range [0, 1]; only pixels whose brightest RGB channel is strictly above this fraction generate glow. |
+| `view.glow.radius` | `16` | Active positive int32 Gaussian support radius in canvas pixels, independent of grid factor. |
+| `view.glow.intensity` | `1` | Active nonnegative finite float32 glow multiplier; 0 off, 1 normal, above 1 stronger. Omitted values default to 1. |
 
 Canvas dimensions are `ceil(cols * cellSize * canvasScale[0])` by
 `ceil(rows * cellSize * canvasScale[1])`, at pixel density 1. The orthographic
 camera fits the rotated original block, adjusted by padding and zoom; grown
 cells outside the block can be clipped.
+
+### Final-image glow
+
+Enable `view.glow.enabled` to extract bright pixels from the completed,
+alpha-composited and shaded image, Gaussian-blur their RGB colors, and add the
+result over the unchanged original image. RGB output is clamped to the display
+range. `intensity` multiplies only the blurred glow, not the original image:
+0 leaves the image unchanged and skips glow processing, 0.5 gives half strength,
+1 preserves normal strength, and 2 doubles it before clamping. Cutoff and radius
+are unaffected.
+Brightness is `max(red, green, blue) / 255`, not luminance: a saturated
+red pixel can generate glow too. Pixels at or below the cutoff do not generate
+glow, but can receive it from neighbors. The background participates in the
+threshold test; a bright background can glow. If no pixels pass the cutoff,
+the image stays unchanged.
+
+The Gaussian uses sigma `radius / 3`, normalized weights, and finite support
+from `-radius` to `+radius` along each axis. Outside-canvas samples are zero
+(no wrapping or repeated edge pixels). A radius of 16 is not a sigma of 16.
+The radius stays fixed in output pixels when changing grid factor or camera.
+Glow appears only after generation completes; intermediate layers remain
+unmodified. PNG export waits for postprocessing and includes the effect.
+
+Enabled glow needs additional full-resolution GPU memory and filtering work.
+Allocation, shader, or context failures stop the run explicitly rather than
+silently reducing quality. Disabled glow allocates no glow buffers and runs no
+extra passes. An omitted glow section resolves to the disabled defaults;
+`enabled` must always be boolean, while cutoff, radius, and intensity are
+validated only when enabled.
 
 ## Validation and resource limits
 
